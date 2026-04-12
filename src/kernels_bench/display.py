@@ -170,7 +170,7 @@ def print_results(result: BenchResult) -> None:
     if result.device:
         d = result.device
         _print_centered(
-            f"{d.gpu_name} | CUDA {d.cuda_version} | {d.gpu_memory_gb} GB",
+            f"{d.gpu_name} | {d.runtime_name} {d.runtime_version} | {d.gpu_memory_gb} GB",
             total_width,
         )
         _print_centered(f"torch {d.torch_version} | python {d.python_version}", total_width)

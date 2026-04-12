@@ -2,8 +2,11 @@
 
 import torch
 
-from kernels_bench.validate import ValidationReport, _compare_tensors, validate_quick
+from kernels_bench.runtime import CUDARuntime
 from kernels_bench.spec import TensorSpec
+from kernels_bench.validate import _compare_tensors, validate_quick
+
+_runtime = CUDARuntime()
 
 
 def test_compare_tensors_identical():
@@ -60,7 +63,7 @@ def test_validate_quick_matching():
         "correct-a": FakeKernelCorrect(),
         "correct-b": FakeKernelAlsoCorrect(),
     }
-    report = validate_quick(kernels=kernels, fn_name="my_fn", specs=specs)
+    report = validate_quick(kernels=kernels, fn_name="my_fn", specs=specs, runtime=_runtime)
     assert report.all_passed
     assert len(report.comparisons) == 1
     assert report.comparisons[0].passed
@@ -75,7 +78,7 @@ def test_validate_quick_mismatching():
         "correct": FakeKernelCorrect(),
         "wrong": FakeKernelWrong(),
     }
-    report = validate_quick(kernels=kernels, fn_name="my_fn", specs=specs)
+    report = validate_quick(kernels=kernels, fn_name="my_fn", specs=specs, runtime=_runtime)
     assert not report.all_passed
     assert len(report.comparisons) == 1
     assert not report.comparisons[0].passed
@@ -93,7 +96,7 @@ def test_validate_quick_three_kernels():
         "correct-b": FakeKernelAlsoCorrect(),
         "wrong": FakeKernelWrong(),
     }
-    report = validate_quick(kernels=kernels, fn_name="my_fn", specs=specs)
+    report = validate_quick(kernels=kernels, fn_name="my_fn", specs=specs, runtime=_runtime)
     assert not report.all_passed
     assert len(report.comparisons) == 3
 

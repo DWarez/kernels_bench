@@ -5,13 +5,16 @@ from __future__ import annotations
 import dataclasses
 import statistics
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 
 from kernels_bench.device import DeviceInfo
 from kernels_bench.spec import TensorSpec
 from kernels_bench.validate import ValidationReport
+
+if TYPE_CHECKING:
+    from kernels_bench.runtime import Runtime
 
 
 @dataclasses.dataclass(frozen=True)
@@ -108,6 +111,7 @@ def _timed_loop(
     args: list[Any],
     warmup: int,
     iterations: int,
+    runtime: Runtime,
     on_step: ProgressCallback = None,
 ) -> list[float]:
     """Run warmup + timed iterations, return per-iteration times in ms."""
@@ -115,19 +119,17 @@ def _timed_loop(
         fn(*args)
         if on_step:
             on_step("warmup", i + 1, warmup)
-    torch.cuda.synchronize()
+    runtime.synchronize()
 
     times: list[float] = []
     for i in range(iterations):
-        start = torch.cuda.Event(enable_timing=True)
-        end = torch.cuda.Event(enable_timing=True)
-
-        start.record()
+        timer = runtime.create_timer()
+        timer.record_start()
         fn(*args)
-        end.record()
+        timer.record_end()
 
-        torch.cuda.synchronize()
-        times.append(start.elapsed_time(end))
+        runtime.synchronize()
+        times.append(timer.elapsed_ms())
         if on_step:
             on_step("bench", i + 1, iterations)
 
@@ -141,6 +143,7 @@ def run_benchmark(
     output_specs: list[TensorSpec],
     warmup: int,
     iterations: int,
+    runtime: Runtime,
     on_step: ProgressCallback = None,
 ) -> list[float]:
     """Run a user-defined benchmark function (kernel, *inputs, *outputs)."""
@@ -150,7 +153,7 @@ def run_benchmark(
     args.extend(tensors[s.name] for s in input_specs)
     args.extend(tensors[s.name] for s in output_specs)
 
-    return _timed_loop(bench_fn, args, warmup, iterations, on_step)
+    return _timed_loop(bench_fn, args, warmup, iterations, runtime, on_step)
 
 
 def run_benchmark_quick(
@@ -159,6 +162,7 @@ def run_benchmark_quick(
     specs: list[TensorSpec],
     warmup: int,
     iterations: int,
+    runtime: Runtime,
     on_step: ProgressCallback = None,
 ) -> list[float]:
     """Run a kernel function directly with args in spec order.
@@ -168,4 +172,4 @@ def run_benchmark_quick(
     """
     fn = getattr(kernel, fn_name)
     tensors = [spec.allocate() for spec in specs]
-    return _timed_loop(fn, tensors, warmup, iterations, on_step)
+    return _timed_loop(fn, tensors, warmup, iterations, runtime, on_step)

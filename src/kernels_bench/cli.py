@@ -200,13 +200,14 @@ def quick(
     """
     from kernels import get_kernel
 
-    from kernels_bench.device import get_device_info
     from kernels_bench.progress import benchmark_progress, make_on_step
     from kernels_bench.runner import KernelResult, run_benchmark_quick
+    from kernels_bench.runtime import detect_runtime
     from kernels_bench.validate import validate_quick
 
     specs = [_parse_arg(a) for a in args]
     kernel_list = [k.strip() for k in kernels.split(",")]
+    runtime = detect_runtime()
 
     # Load all kernels upfront
     loaded_kernels: dict[str, object] = {}
@@ -223,6 +224,7 @@ def quick(
             kernels=loaded_kernels,
             fn_name=fn,
             specs=specs,
+            runtime=runtime,
             atol=atol,
             rtol=rtol,
         )
@@ -239,6 +241,7 @@ def quick(
                 specs=specs,
                 warmup=warmup,
                 iterations=iterations,
+                runtime=runtime,
                 on_step=on_step,
             )
             all_results.append(KernelResult(kernel_id=kernel_id, params={}, times_ms=times))
@@ -246,7 +249,7 @@ def quick(
     result = BenchResult(
         bench_name=fn,
         kernel_results=all_results,
-        device=get_device_info(),
+        device=runtime.get_device_info(),
         validation=validation,
     )
     _handle_output(result, output)

@@ -3,7 +3,10 @@
 import torch
 
 from kernels_bench.runner import KernelResult, _timed_loop, run_benchmark, run_benchmark_quick
+from kernels_bench.runtime import CUDARuntime
 from kernels_bench.spec import TensorSpec
+
+_runtime = CUDARuntime()
 
 
 def _noop(*args):
@@ -23,7 +26,7 @@ class FakeKernel:
 
 def test_timed_loop_returns_correct_count():
     x = torch.randn(16, 16, device="cuda")
-    times = _timed_loop(_noop, [x], warmup=2, iterations=10)
+    times = _timed_loop(_noop, [x], warmup=2, iterations=10, runtime=_runtime)
     assert len(times) == 10
     assert all(t >= 0 for t in times)
 
@@ -35,7 +38,7 @@ def test_timed_loop_with_callback():
         steps.append((phase, current, total))
 
     x = torch.randn(16, 16, device="cuda")
-    _timed_loop(_noop, [x], warmup=3, iterations=5, on_step=on_step)
+    _timed_loop(_noop, [x], warmup=3, iterations=5, runtime=_runtime, on_step=on_step)
 
     warmup_steps = [s for s in steps if s[0] == "warmup"]
     bench_steps = [s for s in steps if s[0] == "bench"]
@@ -56,6 +59,7 @@ def test_run_benchmark():
         output_specs=output_specs,
         warmup=2,
         iterations=5,
+        runtime=_runtime,
     )
     assert len(times) == 5
 
@@ -71,6 +75,7 @@ def test_run_benchmark_quick():
         specs=specs,
         warmup=2,
         iterations=5,
+        runtime=_runtime,
     )
     assert len(times) == 5
 

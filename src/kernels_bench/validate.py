@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import dataclasses
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 
 from kernels_bench.spec import TensorSpec
+
+if TYPE_CHECKING:
+    from kernels_bench.runtime import Runtime
 
 
 @dataclasses.dataclass(frozen=True)
@@ -48,6 +51,7 @@ def _collect_outputs_quick(
     fn_name: str,
     specs: list[TensorSpec],
     input_tensors: list[torch.Tensor],
+    runtime: Runtime,
 ) -> list[torch.Tensor]:
     """Run a kernel function once and return the output tensors.
 
@@ -67,7 +71,7 @@ def _collect_outputs_quick(
             args.append(input_tensors[i])
 
     fn(*args)
-    torch.cuda.synchronize()
+    runtime.synchronize()
     return output_tensors
 
 
@@ -77,6 +81,7 @@ def _collect_outputs_bench(
     input_specs: list[TensorSpec],
     output_specs: list[TensorSpec],
     input_tensors: dict[str, torch.Tensor],
+    runtime: Runtime,
 ) -> dict[str, torch.Tensor]:
     """Run a bench function once and return the output tensors by name.
 
@@ -92,7 +97,7 @@ def _collect_outputs_bench(
     args.extend(output_tensors[s.name] for s in output_specs)
 
     bench_fn(*args)
-    torch.cuda.synchronize()
+    runtime.synchronize()
     return output_tensors
 
 
@@ -125,18 +130,11 @@ def validate_quick(
     kernels: dict[str, Any],
     fn_name: str,
     specs: list[TensorSpec],
+    runtime: Runtime,
     atol: float = 1e-3,
     rtol: float = 1e-3,
 ) -> ValidationReport:
-    """Validate that all kernels produce the same outputs for the quick command.
-
-    Args:
-        kernels: mapping of kernel_id -> loaded kernel object
-        fn_name: function name to call on each kernel
-        specs: ordered tensor specs (with roles)
-        atol: absolute tolerance for allclose
-        rtol: relative tolerance for allclose
-    """
+    """Validate that all kernels produce the same outputs for the quick command."""
     # Allocate shared input tensors once
     input_tensors: list[torch.Tensor] = []
     for spec in specs:
@@ -148,7 +146,9 @@ def validate_quick(
     # Collect outputs for each kernel
     kernel_outputs: dict[str, list[torch.Tensor]] = {}
     for kernel_id, kernel in kernels.items():
-        kernel_outputs[kernel_id] = _collect_outputs_quick(kernel, fn_name, specs, input_tensors)
+        kernel_outputs[kernel_id] = _collect_outputs_quick(
+            kernel, fn_name, specs, input_tensors, runtime
+        )
 
     # Pairwise comparison
     kernel_ids = list(kernels.keys())
@@ -195,6 +195,7 @@ def validate_bench(
     kernels: dict[str, Any],
     input_specs: list[TensorSpec],
     output_specs: list[TensorSpec],
+    runtime: Runtime,
     atol: float = 1e-3,
     rtol: float = 1e-3,
 ) -> ValidationReport:
@@ -208,7 +209,7 @@ def validate_bench(
     kernel_outputs: dict[str, dict[str, torch.Tensor]] = {}
     for kernel_id, kernel in kernels.items():
         kernel_outputs[kernel_id] = _collect_outputs_bench(
-            bench_fn, kernel, input_specs, output_specs, input_tensors
+            bench_fn, kernel, input_specs, output_specs, input_tensors, runtime
         )
 
     # Pairwise comparison

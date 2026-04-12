@@ -1,0 +1,247 @@
+"""Box-drawing display for benchmark results, inspired by hf-mem."""
+
+from __future__ import annotations
+
+import re
+import sys
+
+from kernels_bench import __version__
+from kernels_bench.runner import BenchResult, KernelResult
+
+# Box-drawing characters
+BOX = {
+    "tl": "\u250c",
+    "tr": "\u2510",
+    "bl": "\u2514",
+    "br": "\u2518",
+    "ht": "\u2500",
+    "vt": "\u2502",
+    "tsep": "\u252c",
+    "bsep": "\u2534",
+    "lm": "\u251c",
+    "rm": "\u2524",
+    "mm": "\u253c",
+}
+
+# ANSI escape codes
+COLOR = "\x1b[38;2;244;183;63m"  # Amber (matching hf-mem)
+RESET = "\x1b[0m"
+BOLD = "\x1b[1m"
+DIM = "\x1b[2m"
+GREEN = "\x1b[38;2;130;224;170m"
+RED = "\x1b[38;2;255;100;100m"
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _visible_len(s: str) -> int:
+    """Length of a string ignoring ANSI escape codes."""
+    return len(_ANSI_RE.sub("", s))
+
+
+def _pad_right(s: str, width: int) -> str:
+    """Pad a string (which may contain ANSI codes) to a visible width."""
+    pad = width - _visible_len(s)
+    return s + " " * max(0, pad)
+
+
+def _print_color(text: str) -> None:
+    print(f"{COLOR}{text}{RESET}")
+
+
+def _make_bar(value: float, max_value: float, width: int) -> str:
+    """Create a progress bar using block characters."""
+    if max_value <= 0:
+        return "\u2591" * width
+    frac = min(max(value / max_value, 0.0), 1.0)
+    filled = round(frac * width)
+    filled = max(0, min(width, filled))
+    return "\u2588" * filled + "\u2591" * (width - filled)
+
+
+def _print_header(width: int, badge: str | None = None) -> None:
+    inner = width - 2
+    if badge:
+        badge_text = f" {badge} "
+        fill_len = max(0, inner - len(badge_text))
+        top = BOX["tl"] + (BOX["tsep"] * fill_len) + badge_text + BOX["tr"]
+    else:
+        top = BOX["tl"] + (BOX["tsep"] * inner) + BOX["tr"]
+    _print_color(top)
+
+
+def _print_centered(text: str, width: int) -> None:
+    inner = width - 2
+    vis_len = _visible_len(text)
+    pad_left = (inner - vis_len) // 2
+    pad_right = inner - vis_len - pad_left
+    _print_color(f"{BOX['vt']}{' ' * pad_left}{text}{' ' * pad_right}{BOX['vt']}")
+
+
+def _print_divider(width: int, style: str = "mid") -> None:
+    inner = width - 2
+    match style:
+        case "top":
+            left, fill, right = BOX["lm"], BOX["tsep"], BOX["rm"]
+        case "mid":
+            left, fill, right = BOX["lm"], BOX["ht"], BOX["rm"]
+        case "bottom":
+            left, fill, right = BOX["bl"], BOX["bsep"], BOX["br"]
+        case "section":
+            left, fill, right = BOX["lm"], BOX["bsep"], BOX["rm"]
+        case _:
+            left, fill, right = BOX["lm"], BOX["ht"], BOX["rm"]
+    _print_color(left + fill * inner + right)
+
+
+def _print_row(label: str, value: str, width: int, label_width: int) -> None:
+    """Print a two-column row: | LABEL | VALUE |"""
+    inner = width - 2
+    data_width = inner - label_width - 3  # 3 accounts for " ", "|", " " between columns
+    label_fmt = _pad_right(label, label_width)
+    value_fmt = _pad_right(value, data_width)
+    _print_color(f"{BOX['vt']} {label_fmt}{BOX['vt']} {value_fmt}{BOX['vt']}")
+
+
+def _print_row_divider(width: int, label_width: int, style: str = "mid") -> None:
+    inner = width - 2
+    data_width = inner - label_width - 3
+    match style:
+        case "top":
+            left, mid, right = BOX["lm"], BOX["tsep"], BOX["rm"]
+        case "bottom":
+            left, mid, right = BOX["bl"], BOX["bsep"], BOX["br"]
+        case _:
+            left, mid, right = BOX["lm"], BOX["mm"], BOX["rm"]
+    name_section = BOX["ht"] * (label_width + 1)
+    data_section = BOX["ht"] * (data_width + 1)
+    _print_color(f"{left}{name_section}{mid}{data_section}{right}")
+
+
+def _format_params(params: dict[str, int]) -> str:
+    if not params:
+        return ""
+    return ", ".join(f"{k}={v}" for k, v in sorted(params.items()))
+
+
+def _truncate(text: str, max_len: int) -> str:
+    if len(text) > max_len:
+        return text[: max_len - 3] + "..."
+    return text
+
+
+def print_results(result: BenchResult) -> None:
+    """Print benchmark results in hf-mem box-drawing style."""
+    kernel_results = result.kernel_results
+    if not kernel_results:
+        print("No results to display.")
+        return
+
+    # Group results by param combination
+    param_groups: dict[str, list[KernelResult]] = {}
+    for kr in kernel_results:
+        key = _format_params(kr.params)
+        param_groups.setdefault(key, []).append(kr)
+
+    # Compute layout widths
+    kernel_ids = list({kr.kernel_id for kr in kernel_results})
+    max_kernel_len = max(len(k) for k in kernel_ids)
+    label_width = max(max_kernel_len + 1, 16)  # +1 for breathing room
+    bar_width = 40
+    total_width = label_width + bar_width + 20 + 5  # 20 for timing text, 5 for borders
+    total_width = max(total_width, 60)
+
+    # Derive actual bar_width from total
+    inner = total_width - 2
+    data_col_width = inner - label_width - 3
+    bar_width = max(data_col_width - 14, 20)  # 14 chars for "999.999 ms  "
+
+    # Clear any leftover progress bar output from kernel downloads
+    sys.stderr.flush()
+    sys.stdout.flush()
+    print()
+
+    # Header
+    _print_header(total_width, badge=f"kernels-bench v{__version__}")
+    _print_centered("KERNEL BENCHMARK RESULTS", total_width)
+    _print_centered(f'"{result.bench_name}"', total_width)
+
+    # Device info
+    if result.device:
+        d = result.device
+        _print_centered(
+            f"{d.gpu_name} | CUDA {d.cuda_version} | {d.gpu_memory_gb} GB",
+            total_width,
+        )
+        _print_centered(f"torch {d.torch_version} | python {d.python_version}", total_width)
+
+    n_kernels = len(kernel_ids)
+    n_params = len(param_groups)
+    summary = f"{n_kernels} KERNEL{'S' if n_kernels > 1 else ''}"
+    if n_params > 1:
+        summary += f" x {n_params} PARAM SETS"
+    _print_centered(summary, total_width)
+
+    # Validation section
+    if result.validation:
+        _print_divider(total_width, "section")
+        if result.validation.all_passed:
+            _print_centered(f"{GREEN}VALIDATION: ALL PASSED{RESET}{COLOR}", total_width)
+        else:
+            _print_centered(f"{RED}{BOLD}VALIDATION: MISMATCH DETECTED{RESET}{COLOR}", total_width)
+        _print_row_divider(total_width, label_width, "top")
+        for comp in result.validation.comparisons:
+            status = f"{GREEN}PASS{RESET}{COLOR}" if comp.passed else f"{RED}FAIL{RESET}{COLOR}"
+            pair_label = _truncate(f"{comp.kernel_a} vs", label_width)
+            _print_row(pair_label, f"{status}", total_width, label_width)
+            _print_row(
+                _truncate(comp.kernel_b, label_width),
+                f"{DIM}max_abs={comp.max_abs_diff:.2e}  "
+                f"max_rel={comp.max_rel_diff:.2e}  "
+                f"mismatched={comp.mismatched_elements}/{comp.total_elements}"
+                f"{RESET}{COLOR}",
+                total_width,
+                label_width,
+            )
+        _print_row_divider(total_width, label_width, "bottom")
+
+    for group_key, group_results in param_groups.items():
+        _print_divider(total_width, "section")
+        if group_key:
+            _print_centered(f"PARAMS: {group_key}", total_width)
+        _print_row_divider(total_width, label_width, "top")
+
+        fastest = min(group_results, key=lambda r: r.median_ms)
+        slowest_median = max(r.median_ms for r in group_results)
+
+        for i, kr in enumerate(group_results):
+            is_fastest = kr is fastest and len(group_results) > 1
+            kernel_label = _truncate(kr.kernel_id, label_width)
+            bar = _make_bar(kr.median_ms, slowest_median, bar_width)
+
+            # Timing line with bar
+            median_text = f"{kr.median_ms:.3f} ms"
+            if is_fastest:
+                timing = f"{GREEN}{BOLD}{median_text}{RESET}{COLOR}  {bar}"
+            else:
+                timing = f"{median_text}  {bar}"
+            _print_row(kernel_label, timing, total_width, label_width)
+
+            # Stats line (dimmed)
+            stats = (
+                f"mean={kr.mean_ms:.3f}  std={kr.std_ms:.3f}  "
+                f"min={kr.min_ms:.3f}  max={kr.max_ms:.3f}"
+            )
+            _print_row("", f"{DIM}{stats}{RESET}{COLOR}", total_width, label_width)
+
+            # Comparison line
+            if is_fastest:
+                _print_row("", f"{GREEN}FASTEST{RESET}{COLOR}", total_width, label_width)
+            elif len(group_results) > 1:
+                slowdown = kr.median_ms / fastest.median_ms
+                _print_row("", f"{slowdown:.2f}x slower", total_width, label_width)
+
+            if i < len(group_results) - 1:
+                _print_row_divider(total_width, label_width)
+
+    _print_row_divider(total_width, label_width, "bottom")

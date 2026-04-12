@@ -1,0 +1,83 @@
+"""Tests for the Bench class."""
+
+import pytest
+import torch
+
+from kernels_bench.bench import Bench
+from kernels_bench.spec import TensorSpec
+
+
+def test_bench_validates_symbolic_dims():
+    with pytest.raises(ValueError, match="not provided in params"):
+        Bench(
+            name="bad",
+            inputs=[TensorSpec("x", shape=("M", "N"), dtype=torch.float16)],
+            outputs=[],
+            params={"M": [1024]},  # missing N
+        )
+
+
+def test_bench_validates_unused_params():
+    with pytest.raises(ValueError, match="not used in any spec"):
+        Bench(
+            name="bad",
+            inputs=[TensorSpec("x", shape=(1024,), dtype=torch.float16)],
+            outputs=[],
+            params={"M": [1024]},  # M not used
+        )
+
+
+def test_bench_validates_duplicate_names():
+    with pytest.raises(ValueError, match="duplicate"):
+        Bench(
+            name="bad",
+            inputs=[TensorSpec("x", shape=(1024,), dtype=torch.float16)],
+            outputs=[TensorSpec("x", shape=(1024,), dtype=torch.float16, role="output")],
+        )
+
+
+def test_bench_param_combinations():
+    bench = Bench(
+        name="test",
+        inputs=[TensorSpec("x", shape=("M", "N"), dtype=torch.float16)],
+        outputs=[],
+        params={"M": [512, 1024], "N": [256, 512]},
+    )
+    combos = bench._param_combinations()
+    assert len(combos) == 4
+    assert {"M": 512, "N": 256} in combos
+    assert {"M": 1024, "N": 512} in combos
+
+
+def test_bench_no_params():
+    bench = Bench(
+        name="test",
+        inputs=[TensorSpec("x", shape=(1024,), dtype=torch.float16)],
+        outputs=[],
+    )
+    combos = bench._param_combinations()
+    assert combos == [{}]
+
+
+def test_bench_fn_decorator():
+    bench = Bench(
+        name="test",
+        inputs=[TensorSpec("x", shape=(1024,), dtype=torch.float16)],
+        outputs=[],
+    )
+
+    @bench.fn
+    def forward(kernel, x):
+        pass
+
+    assert bench._fn is forward
+
+
+def test_bench_run_without_fn_raises():
+    bench = Bench(
+        name="test",
+        inputs=[TensorSpec("x", shape=(1024,), dtype=torch.float16)],
+        outputs=[],
+    )
+    with pytest.raises(RuntimeError, match="no benchmark function registered"):
+        bench.run(kernels=["fake/kernel"])

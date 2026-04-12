@@ -1,4 +1,13 @@
-"""Example: benchmark GeLU activation kernels."""
+"""Benchmark GeLU activation across different tensor sizes.
+
+This example sweeps over multiple M dimensions while keeping N fixed,
+showing how kernel performance scales with input size.
+
+Usage:
+    kernels-bench run examples/bench_gelu.py \
+        -k kernels-community/activation \
+        -w 10 -n 100
+"""
 
 import torch
 
@@ -10,7 +19,7 @@ bench = Bench(
         TensorSpec("x", shape=("M", "N"), dtype=torch.float16),
     ],
     outputs=[
-        TensorSpec("y", shape=("M", "N"), dtype=torch.float16),
+        TensorSpec("y", shape=("M", "N"), dtype=torch.float16, role="output"),
     ],
     params={"M": [1024, 2048, 4096], "N": [1024]},
 )

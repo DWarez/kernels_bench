@@ -215,4 +215,8 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-.claude
+.claude/
+
+# Benchmark output
+*.json
+!examples/*.json

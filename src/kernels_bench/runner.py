@@ -92,13 +92,14 @@ def _resolve_specs(specs: list[TensorSpec], params: dict[str, int]) -> list[Tens
 def _allocate_tensors(
     input_specs: list[TensorSpec],
     output_specs: list[TensorSpec],
+    device: str,
 ) -> dict[str, torch.Tensor]:
     """Allocate tensors for all specs, keyed by name."""
     tensors: dict[str, torch.Tensor] = {}
     for spec in input_specs:
-        tensors[spec.name] = spec.allocate_input()
+        tensors[spec.name] = spec.allocate_input(device)
     for spec in output_specs:
-        tensors[spec.name] = spec.allocate_output()
+        tensors[spec.name] = spec.allocate_output(device)
     return tensors
 
 
@@ -147,7 +148,7 @@ def run_benchmark(
     on_step: ProgressCallback = None,
 ) -> list[float]:
     """Run a user-defined benchmark function (kernel, *inputs, *outputs)."""
-    tensors = _allocate_tensors(input_specs, output_specs)
+    tensors = _allocate_tensors(input_specs, output_specs, runtime.device)
 
     args: list[Any] = [kernel]
     args.extend(tensors[s.name] for s in input_specs)
@@ -171,5 +172,5 @@ def run_benchmark_quick(
     Tensors are allocated according to each spec's role and passed in order.
     """
     fn = getattr(kernel, fn_name)
-    tensors = [spec.allocate() for spec in specs]
+    tensors = [spec.allocate(runtime.device) for spec in specs]
     return _timed_loop(fn, tensors, warmup, iterations, runtime, on_step)

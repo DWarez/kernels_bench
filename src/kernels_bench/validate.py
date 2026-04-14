@@ -62,9 +62,10 @@ def _collect_outputs_quick(
     # Allocate fresh outputs, reuse the shared inputs
     args: list[torch.Tensor] = []
     output_tensors: list[torch.Tensor] = []
+    device = input_tensors[0].device.type if input_tensors else "cuda"
     for i, spec in enumerate(specs):
         if spec.role == "output":
-            t = spec.allocate_output()
+            t = spec.allocate_output(device)
             output_tensors.append(t)
             args.append(t)
         else:
@@ -87,10 +88,11 @@ def _collect_outputs_bench(
 
     Uses shared input tensors so all kernels get the same inputs.
     """
-    # Allocate fresh outputs
+    # Allocate fresh outputs on the same device as the inputs
+    device = next(iter(input_tensors.values())).device.type
     output_tensors: dict[str, torch.Tensor] = {}
     for spec in output_specs:
-        output_tensors[spec.name] = spec.allocate_output()
+        output_tensors[spec.name] = spec.allocate_output(device)
 
     args = [kernel]
     args.extend(input_tensors[s.name] for s in input_specs)
@@ -139,7 +141,7 @@ def validate_quick(
     input_tensors: list[torch.Tensor] = []
     for spec in specs:
         if spec.role == "input":
-            input_tensors.append(spec.allocate_input())
+            input_tensors.append(spec.allocate_input(runtime.device))
         else:
             input_tensors.append(torch.empty(0))  # placeholder, won't be used
 
@@ -203,7 +205,7 @@ def validate_bench(
     # Allocate shared input tensors once
     input_tensors: dict[str, torch.Tensor] = {}
     for spec in input_specs:
-        input_tensors[spec.name] = spec.allocate_input()
+        input_tensors[spec.name] = spec.allocate_input(runtime.device)
 
     # Collect outputs for each kernel
     kernel_outputs: dict[str, dict[str, torch.Tensor]] = {}

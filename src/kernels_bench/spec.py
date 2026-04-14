@@ -82,22 +82,22 @@ class TensorSpec(BaseModel):
             role=self.role,
         )
 
-    def allocate(self) -> torch.Tensor:
+    def allocate(self, device: str | None = None) -> torch.Tensor:
         """Allocate a tensor based on role: random data for inputs, empty for outputs."""
         if self.role == "output":
-            return self.allocate_output()
-        return self.allocate_input()
+            return self.allocate_output(device)
+        return self.allocate_input(device)
 
-    def allocate_input(self) -> torch.Tensor:
+    def allocate_input(self, device: str | None = None) -> torch.Tensor:
         """Allocate a tensor filled with random data (for inputs)."""
         concrete = [d for d in self.shape if isinstance(d, int)]
         if len(concrete) != len(self.shape):
             raise RuntimeError("cannot allocate tensor with unresolved symbolic dims")
-        return torch.randn(concrete, dtype=self.dtype, device=self.device)
+        return torch.randn(concrete, dtype=self.dtype, device=device or self.device)
 
-    def allocate_output(self) -> torch.Tensor:
+    def allocate_output(self, device: str | None = None) -> torch.Tensor:
         """Allocate an empty tensor (for outputs)."""
         concrete = [d for d in self.shape if isinstance(d, int)]
         if len(concrete) != len(self.shape):
             raise RuntimeError("cannot allocate tensor with unresolved symbolic dims")
-        return torch.empty(concrete, dtype=self.dtype, device=self.device)
+        return torch.empty(concrete, dtype=self.dtype, device=device or self.device)

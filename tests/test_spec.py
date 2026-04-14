@@ -57,24 +57,29 @@ def test_resolve_mixed_dims():
     assert resolved.shape == (1024, 512)
 
 
-def test_allocate_input():
-    spec = TensorSpec("x", shape=(32, 32), dtype=torch.float16)
+@pytest.mark.gpu
+def test_allocate_input(device):
+    spec = TensorSpec("x", shape=(32, 32), dtype=torch.float16, device=device)
     t = spec.allocate_input()
     assert t.shape == (32, 32)
     assert t.dtype == torch.float16
-    assert t.device.type == "cuda"
+    assert t.device.type == device
 
 
-def test_allocate_output():
-    spec = TensorSpec("y", shape=(32, 32), dtype=torch.float16, role="output")
+@pytest.mark.gpu
+def test_allocate_output(device):
+    spec = TensorSpec("y", shape=(32, 32), dtype=torch.float16, device=device, role="output")
     t = spec.allocate_output()
     assert t.shape == (32, 32)
     assert t.dtype == torch.float16
 
 
-def test_allocate_by_role():
-    input_spec = TensorSpec("x", shape=(16, 16), dtype=torch.float16, role="input")
-    output_spec = TensorSpec("y", shape=(16, 16), dtype=torch.float16, role="output")
+@pytest.mark.gpu
+def test_allocate_by_role(device):
+    input_spec = TensorSpec("x", shape=(16, 16), dtype=torch.float16, device=device, role="input")
+    output_spec = TensorSpec(
+        "y", shape=(16, 16), dtype=torch.float16, device=device, role="output"
+    )
     ti = input_spec.allocate()
     to = output_spec.allocate()
     assert ti.shape == to.shape

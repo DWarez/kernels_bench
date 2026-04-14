@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import dataclasses
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 
 from kernels_bench.spec import TensorSpec
+
+if TYPE_CHECKING:
+    from kernels_bench.runtime import Runtime
 
 
 @dataclasses.dataclass(frozen=True)
@@ -48,6 +51,7 @@ def _collect_outputs_quick(
     fn_name: str,
     specs: list[TensorSpec],
     input_tensors: list[torch.Tensor],
+    runtime: Runtime,
 ) -> list[torch.Tensor]:
     """Run a kernel function once and return the output tensors.
 
@@ -58,16 +62,17 @@ def _collect_outputs_quick(
     # Allocate fresh outputs, reuse the shared inputs
     args: list[torch.Tensor] = []
     output_tensors: list[torch.Tensor] = []
+    device = input_tensors[0].device.type if input_tensors else "cuda"
     for i, spec in enumerate(specs):
         if spec.role == "output":
-            t = spec.allocate_output()
+            t = spec.allocate_output(device)
             output_tensors.append(t)
             args.append(t)
         else:
             args.append(input_tensors[i])
 
     fn(*args)
-    torch.cuda.synchronize()
+    runtime.synchronize()
     return output_tensors
 
 
@@ -77,22 +82,24 @@ def _collect_outputs_bench(
     input_specs: list[TensorSpec],
     output_specs: list[TensorSpec],
     input_tensors: dict[str, torch.Tensor],
+    runtime: Runtime,
 ) -> dict[str, torch.Tensor]:
     """Run a bench function once and return the output tensors by name.
 
     Uses shared input tensors so all kernels get the same inputs.
     """
-    # Allocate fresh outputs
+    # Allocate fresh outputs on the same device as the inputs
+    device = next(iter(input_tensors.values())).device.type
     output_tensors: dict[str, torch.Tensor] = {}
     for spec in output_specs:
-        output_tensors[spec.name] = spec.allocate_output()
+        output_tensors[spec.name] = spec.allocate_output(device)
 
     args = [kernel]
     args.extend(input_tensors[s.name] for s in input_specs)
     args.extend(output_tensors[s.name] for s in output_specs)
 
     bench_fn(*args)
-    torch.cuda.synchronize()
+    runtime.synchronize()
     return output_tensors
 
 
@@ -125,30 +132,25 @@ def validate_quick(
     kernels: dict[str, Any],
     fn_name: str,
     specs: list[TensorSpec],
+    runtime: Runtime,
     atol: float = 1e-3,
     rtol: float = 1e-3,
 ) -> ValidationReport:
-    """Validate that all kernels produce the same outputs for the quick command.
-
-    Args:
-        kernels: mapping of kernel_id -> loaded kernel object
-        fn_name: function name to call on each kernel
-        specs: ordered tensor specs (with roles)
-        atol: absolute tolerance for allclose
-        rtol: relative tolerance for allclose
-    """
+    """Validate that all kernels produce the same outputs for the quick command."""
     # Allocate shared input tensors once
     input_tensors: list[torch.Tensor] = []
     for spec in specs:
         if spec.role == "input":
-            input_tensors.append(spec.allocate_input())
+            input_tensors.append(spec.allocate_input(runtime.device))
         else:
             input_tensors.append(torch.empty(0))  # placeholder, won't be used
 
     # Collect outputs for each kernel
     kernel_outputs: dict[str, list[torch.Tensor]] = {}
     for kernel_id, kernel in kernels.items():
-        kernel_outputs[kernel_id] = _collect_outputs_quick(kernel, fn_name, specs, input_tensors)
+        kernel_outputs[kernel_id] = _collect_outputs_quick(
+            kernel, fn_name, specs, input_tensors, runtime
+        )
 
     # Pairwise comparison
     kernel_ids = list(kernels.keys())
@@ -195,6 +197,7 @@ def validate_bench(
     kernels: dict[str, Any],
     input_specs: list[TensorSpec],
     output_specs: list[TensorSpec],
+    runtime: Runtime,
     atol: float = 1e-3,
     rtol: float = 1e-3,
 ) -> ValidationReport:
@@ -202,13 +205,13 @@ def validate_bench(
     # Allocate shared input tensors once
     input_tensors: dict[str, torch.Tensor] = {}
     for spec in input_specs:
-        input_tensors[spec.name] = spec.allocate_input()
+        input_tensors[spec.name] = spec.allocate_input(runtime.device)
 
     # Collect outputs for each kernel
     kernel_outputs: dict[str, dict[str, torch.Tensor]] = {}
     for kernel_id, kernel in kernels.items():
         kernel_outputs[kernel_id] = _collect_outputs_bench(
-            bench_fn, kernel, input_specs, output_specs, input_tensors
+            bench_fn, kernel, input_specs, output_specs, input_tensors, runtime
         )
 
     # Pairwise comparison

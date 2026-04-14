@@ -8,9 +8,9 @@ from typing import Any
 
 from kernels import get_kernel
 
-from kernels_bench.device import get_device_info
 from kernels_bench.progress import benchmark_progress, make_on_step
 from kernels_bench.runner import BenchResult, KernelResult, _resolve_specs, run_benchmark
+from kernels_bench.runtime import Runtime, detect_runtime
 from kernels_bench.spec import TensorSpec
 from kernels_bench.validate import validate_bench
 
@@ -95,6 +95,7 @@ class Bench:
         validate: bool = False,
         atol: float = 1e-3,
         rtol: float = 1e-3,
+        runtime: Runtime | None = None,
     ) -> BenchResult:
         """Run the benchmark for all kernels and param combinations.
 
@@ -105,9 +106,13 @@ class Bench:
             validate: if True, compare outputs across kernels before benchmarking
             atol: absolute tolerance for validation
             rtol: relative tolerance for validation
+            runtime: GPU runtime to use (auto-detected if not provided)
         """
         if self._fn is None:
             raise RuntimeError("no benchmark function registered — use @bench.fn")
+
+        if runtime is None:
+            runtime = detect_runtime()
 
         # Load all kernels upfront (needed for validation)
         loaded_kernels: dict[str, Any] = {}
@@ -129,6 +134,7 @@ class Bench:
                 kernels=loaded_kernels,
                 input_specs=resolved_inputs,
                 output_specs=resolved_outputs,
+                runtime=runtime,
                 atol=atol,
                 rtol=rtol,
             )
@@ -158,6 +164,7 @@ class Bench:
                         output_specs=resolved_outputs,
                         warmup=warmup,
                         iterations=iterations,
+                        runtime=runtime,
                         on_step=on_step,
                     )
 
@@ -172,6 +179,6 @@ class Bench:
         return BenchResult(
             bench_name=self.name,
             kernel_results=all_results,
-            device=get_device_info(),
+            device=runtime.get_device_info(),
             validation=validation,
         )

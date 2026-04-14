@@ -1,5 +1,6 @@
 """Tests for the benchmark runner."""
 
+import pytest
 import torch
 
 from kernels_bench.runner import KernelResult, _timed_loop, run_benchmark, run_benchmark_quick
@@ -21,21 +22,23 @@ class FakeKernel:
         y.copy_(x * 2)
 
 
-def test_timed_loop_returns_correct_count():
-    x = torch.randn(16, 16, device="cuda")
-    times = _timed_loop(_noop, [x], warmup=2, iterations=10)
+@pytest.mark.gpu
+def test_timed_loop_returns_correct_count(runtime, device):
+    x = torch.randn(16, 16, device=device)
+    times = _timed_loop(_noop, [x], warmup=2, iterations=10, runtime=runtime)
     assert len(times) == 10
     assert all(t >= 0 for t in times)
 
 
-def test_timed_loop_with_callback():
+@pytest.mark.gpu
+def test_timed_loop_with_callback(runtime, device):
     steps: list[tuple[str, int, int]] = []
 
     def on_step(phase, current, total):
         steps.append((phase, current, total))
 
-    x = torch.randn(16, 16, device="cuda")
-    _timed_loop(_noop, [x], warmup=3, iterations=5, on_step=on_step)
+    x = torch.randn(16, 16, device=device)
+    _timed_loop(_noop, [x], warmup=3, iterations=5, runtime=runtime, on_step=on_step)
 
     warmup_steps = [s for s in steps if s[0] == "warmup"]
     bench_steps = [s for s in steps if s[0] == "bench"]
@@ -45,9 +48,12 @@ def test_timed_loop_with_callback():
     assert bench_steps[-1] == ("bench", 5, 5)
 
 
-def test_run_benchmark():
-    input_specs = [TensorSpec("x", shape=(32, 32), dtype=torch.float16)]
-    output_specs = [TensorSpec("y", shape=(32, 32), dtype=torch.float16, role="output")]
+@pytest.mark.gpu
+def test_run_benchmark(runtime, device):
+    input_specs = [TensorSpec("x", shape=(32, 32), dtype=torch.float16, device=device)]
+    output_specs = [
+        TensorSpec("y", shape=(32, 32), dtype=torch.float16, device=device, role="output")
+    ]
 
     times = run_benchmark(
         bench_fn=_copy_kernel_fn,
@@ -56,14 +62,16 @@ def test_run_benchmark():
         output_specs=output_specs,
         warmup=2,
         iterations=5,
+        runtime=runtime,
     )
     assert len(times) == 5
 
 
-def test_run_benchmark_quick():
+@pytest.mark.gpu
+def test_run_benchmark_quick(runtime, device):
     specs = [
-        TensorSpec("y", shape=(32, 32), dtype=torch.float16, role="output"),
-        TensorSpec("x", shape=(32, 32), dtype=torch.float16, role="input"),
+        TensorSpec("y", shape=(32, 32), dtype=torch.float16, device=device, role="output"),
+        TensorSpec("x", shape=(32, 32), dtype=torch.float16, device=device, role="input"),
     ]
     times = run_benchmark_quick(
         kernel=FakeKernel(),
@@ -71,6 +79,7 @@ def test_run_benchmark_quick():
         specs=specs,
         warmup=2,
         iterations=5,
+        runtime=runtime,
     )
     assert len(times) == 5
 

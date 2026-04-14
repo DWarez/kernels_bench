@@ -77,9 +77,7 @@ def test_allocate_output(device):
 @pytest.mark.gpu
 def test_allocate_by_role(device):
     input_spec = TensorSpec("x", shape=(16, 16), dtype=torch.float16, device=device, role="input")
-    output_spec = TensorSpec(
-        "y", shape=(16, 16), dtype=torch.float16, device=device, role="output"
-    )
+    output_spec = TensorSpec("y", shape=(16, 16), dtype=torch.float16, device=device, role="output")
     ti = input_spec.allocate()
     to = output_spec.allocate()
     assert ti.shape == to.shape

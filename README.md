@@ -203,6 +203,10 @@ uv run ruff format src/          # format
 uv run ty check src/             # type check
 ```
 
+## Credits
+
+The CLI output style matches that of [hf-mem](https://github.com/alvarobartt/hf-mem)
+
 ## License
 
 MIT

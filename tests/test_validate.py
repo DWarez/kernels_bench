@@ -10,7 +10,7 @@ from kernels_bench.validate import _compare_tensors, validate_quick
 @pytest.mark.gpu
 def test_compare_tensors_identical(device):
     a = torch.randn(100, 100, device=device, dtype=torch.float16)
-    passed, max_abs, max_rel, mismatched = _compare_tensors(a, a.clone(), atol=1e-3, rtol=1e-3)
+    passed, max_abs, _max_rel, mismatched = _compare_tensors(a, a.clone(), atol=1e-3, rtol=1e-3)
     assert passed
     assert max_abs == 0.0
     assert mismatched == 0
@@ -20,7 +20,7 @@ def test_compare_tensors_identical(device):
 def test_compare_tensors_different(device):
     a = torch.ones(100, 100, device=device, dtype=torch.float16)
     b = torch.ones(100, 100, device=device, dtype=torch.float16) + 1.0  # off by 1.0
-    passed, max_abs, max_rel, mismatched = _compare_tensors(a, b, atol=1e-3, rtol=1e-3)
+    passed, max_abs, _max_rel, mismatched = _compare_tensors(a, b, atol=1e-3, rtol=1e-3)
     assert not passed
     assert max_abs >= 1.0
     assert mismatched == 10000
@@ -30,7 +30,7 @@ def test_compare_tensors_different(device):
 def test_compare_tensors_within_tolerance(device):
     a = torch.ones(100, 100, device=device, dtype=torch.float16)
     b = a + 1e-4  # tiny diff, within default tolerance
-    passed, max_abs, max_rel, mismatched = _compare_tensors(a, b, atol=1e-3, rtol=1e-3)
+    passed, _max_abs, _max_rel, _mismatched = _compare_tensors(a, b, atol=1e-3, rtol=1e-3)
     assert passed
 
 

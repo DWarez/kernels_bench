@@ -13,11 +13,12 @@ from kernels_bench.runtime._base import Runtime, Timer
 
 
 class MPSTimer(Timer):
-    """Timer for MPS using host-side timing with synchronization.
+    """Timer for MPS using host-side wall-clock with device synchronization.
 
-    MPS does not expose device-side events like CUDA. We synchronize before
-    and after the timed region so that host-side wall-clock time reflects
-    actual GPU execution time.
+    MPS exposes torch.mps.Event with enable_timing, but the implementation
+    is unreliable for rapid successive measurements (event ID reuse causes
+    spurious "End event was not recorded after start event" errors). We use
+    perf_counter with synchronization barriers instead.
     """
 
     def __init__(self) -> None:

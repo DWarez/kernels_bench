@@ -93,7 +93,13 @@ class TensorSpec(BaseModel):
         concrete = [d for d in self.shape if isinstance(d, int)]
         if len(concrete) != len(self.shape):
             raise RuntimeError("cannot allocate tensor with unresolved symbolic dims")
-        return torch.randn(concrete, dtype=self.dtype, device=device or self.device)
+        target_device = device or self.device
+        try:
+            return torch.randn(concrete, dtype=self.dtype, device=target_device)
+        except TypeError:
+            # Some dtypes (e.g. float8) don't support direct random generation
+            # on all backends.  Generate in float32 on CPU, cast, then move.
+            return torch.randn(concrete, dtype=torch.float32).to(self.dtype).to(target_device)
 
     def allocate_output(self, device: str | None = None) -> torch.Tensor:
         """Allocate an empty tensor (for outputs)."""

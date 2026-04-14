@@ -1,7 +1,6 @@
 """Shared fixtures and markers for kernels-bench tests."""
 
 import pytest
-import torch
 
 from kernels_bench.runtime import Runtime, detect_runtime
 

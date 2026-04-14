@@ -77,12 +77,51 @@ def test_allocate_output(device):
 @pytest.mark.gpu
 def test_allocate_by_role(device):
     input_spec = TensorSpec("x", shape=(16, 16), dtype=torch.float16, device=device, role="input")
-    output_spec = TensorSpec(
-        "y", shape=(16, 16), dtype=torch.float16, device=device, role="output"
-    )
+    output_spec = TensorSpec("y", shape=(16, 16), dtype=torch.float16, device=device, role="output")
     ti = input_spec.allocate()
     to = output_spec.allocate()
     assert ti.shape == to.shape
+
+
+@pytest.mark.gpu
+def test_allocate_input_with_device_override(device):
+    """Passing an explicit device to allocate_input() overrides spec.device."""
+    spec = TensorSpec("x", shape=(8, 8), dtype=torch.float16, device="this_does_not_exist")
+    t = spec.allocate_input(device)
+    assert t.device.type == device
+    assert t.shape == (8, 8)
+
+
+@pytest.mark.gpu
+def test_allocate_output_with_device_override(device):
+    """Passing an explicit device to allocate_output() overrides spec.device."""
+    spec = TensorSpec(
+        "y", shape=(8, 8), dtype=torch.float16, device="this_does_not_exist", role="output"
+    )
+    t = spec.allocate_output(device)
+    assert t.device.type == device
+    assert t.shape == (8, 8)
+
+
+@pytest.mark.gpu
+def test_allocate_with_device_override(device):
+    """allocate() forwards the device override based on role."""
+    fake = "this_does_not_exist"
+    input_spec = TensorSpec("x", shape=(8, 8), dtype=torch.float16, device=fake)
+    output_spec = TensorSpec("y", shape=(8, 8), dtype=torch.float16, device=fake, role="output")
+    ti = input_spec.allocate(device)
+    to = output_spec.allocate(device)
+    assert ti.device.type == device
+    assert to.device.type == device
+
+
+@pytest.mark.gpu
+def test_allocate_input_float8_fallback(device):
+    """float8 dtypes that don't support randn should still allocate via cast."""
+    spec = TensorSpec("x", shape=(8, 8), dtype=torch.float8_e4m3fn, device=device)
+    t = spec.allocate_input()
+    assert t.dtype == torch.float8_e4m3fn
+    assert t.shape == (8, 8)
 
 
 def test_allocate_unresolved_raises():

@@ -5,8 +5,8 @@ To add a new backend, create a new module with Runtime and Timer subclasses,
 then register the runtime class in _RUNTIMES below.
 """
 
-from kernels_bench.runtime._base import Runtime, Timer
-from kernels_bench.runtime._cuda import CUDARuntime, CUDATimer
+from kernels_bench.runtime._base import MetricsCollector, RunMetrics, Runtime, Timer
+from kernels_bench.runtime._cuda import CUDAMetricsCollector, CUDARuntime, CUDATimer
 from kernels_bench.runtime._mps import MPSRuntime, MPSTimer
 
 # Order matters: first match wins in detect_runtime().
@@ -26,10 +26,13 @@ def detect_runtime() -> Runtime:
 
 
 __all__ = [
+    "CUDAMetricsCollector",
     "CUDARuntime",
     "CUDATimer",
     "MPSRuntime",
     "MPSTimer",
+    "MetricsCollector",
+    "RunMetrics",
     "Runtime",
     "Timer",
     "detect_runtime",

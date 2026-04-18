@@ -25,7 +25,7 @@ class FakeKernel:
 @pytest.mark.gpu
 def test_timed_loop_returns_correct_count(runtime, device):
     x = torch.randn(16, 16, device=device)
-    times = _timed_loop(_noop, [x], warmup=2, iterations=10, runtime=runtime)
+    times, _metrics = _timed_loop(_noop, [x], warmup=2, iterations=10, runtime=runtime)
     assert len(times) == 10
     assert all(t >= 0 for t in times)
 
@@ -55,7 +55,7 @@ def test_run_benchmark(runtime, device):
         TensorSpec("y", shape=(32, 32), dtype=torch.float16, device=device, role="output")
     ]
 
-    times = run_benchmark(
+    times, _metrics = run_benchmark(
         bench_fn=_copy_kernel_fn,
         kernel=None,  # not used by _copy_kernel_fn
         input_specs=input_specs,
@@ -73,7 +73,7 @@ def test_run_benchmark_quick(runtime, device):
         TensorSpec("y", shape=(32, 32), dtype=torch.float16, device=device, role="output"),
         TensorSpec("x", shape=(32, 32), dtype=torch.float16, device=device, role="input"),
     ]
-    times = run_benchmark_quick(
+    times, _metrics = run_benchmark_quick(
         kernel=FakeKernel(),
         fn_name="double",
         specs=specs,

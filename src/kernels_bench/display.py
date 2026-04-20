@@ -131,6 +131,23 @@ def _truncate(text: str, max_len: int) -> str:
     return text
 
 
+def _format_comparison(kr: KernelResult, fastest: KernelResult) -> str:
+    """Format the comparison line for a non-fastest kernel result.
+
+    Always shows the slowdown factor. When utilization data is available for
+    both this kernel and the fastest, appends a util comparison so users can
+    tell whether a slower kernel is less efficient or just doing more work.
+    """
+    slowdown = kr.median_ms / fastest.median_ms
+    base = f"{slowdown:.2f}x slower"
+
+    u_kr = kr.metrics.util_mean
+    u_fast = fastest.metrics.util_mean
+    if u_kr is not None and u_fast is not None:
+        base += f"  \u00b7  util {u_kr:.0f}% (fastest: {u_fast:.0f}%)"
+    return base
+
+
 def _format_metrics(m: RunMetrics) -> str | None:
     """Format RunMetrics as a single short line, or None if nothing to show."""
     parts: list[str] = []
@@ -259,8 +276,7 @@ def print_results(result: BenchResult) -> None:
             if is_fastest:
                 _print_row("", f"{GREEN}FASTEST{RESET}{COLOR}", total_width, label_width)
             elif len(group_results) > 1:
-                slowdown = kr.median_ms / fastest.median_ms
-                _print_row("", f"{slowdown:.2f}x slower", total_width, label_width)
+                _print_row("", _format_comparison(kr, fastest), total_width, label_width)
 
             if i < len(group_results) - 1:
                 _print_row_divider(total_width, label_width)

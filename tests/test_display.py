@@ -1,6 +1,7 @@
 """Tests for the display module."""
 
 from kernels_bench.display import (
+    _format_comparison,
     _format_metrics,
     _format_params,
     _make_bar,
@@ -8,6 +9,7 @@ from kernels_bench.display import (
     _truncate,
     _visible_len,
 )
+from kernels_bench.runner import KernelResult
 from kernels_bench.runtime import RunMetrics
 
 
@@ -105,3 +107,40 @@ def test_format_metrics_util_requires_both_mean_and_peak():
 def test_format_metrics_combined():
     m = RunMetrics(peak_memory_mb=512.0, util_mean=75.4, util_peak=99.1, util_samples=40)
     assert _format_metrics(m) == "peak_mem=512.0 MB  util=75% (peak 99%)"
+
+
+def _mk_kr(kernel_id: str, median: float, util_mean: float | None = None) -> KernelResult:
+    metrics = RunMetrics(util_mean=util_mean) if util_mean is not None else RunMetrics()
+    # Construct times_ms so median_ms equals `median` exactly (list of one).
+    return KernelResult(kernel_id=kernel_id, params={}, times_ms=[median], metrics=metrics)
+
+
+def test_format_comparison_no_util():
+    fastest = _mk_kr("a", 1.0)
+    slower = _mk_kr("b", 1.28)
+    assert _format_comparison(slower, fastest) == "1.28x slower"
+
+
+def test_format_comparison_with_util_both_set():
+    fastest = _mk_kr("a", 1.0, util_mean=67.0)
+    slower = _mk_kr("b", 1.28, util_mean=94.4)
+    # Slower but much better util — useful signal for the user.
+    assert _format_comparison(slower, fastest) == "1.28x slower  \u00b7  util 94% (fastest: 67%)"
+
+
+def test_format_comparison_util_only_on_fastest_is_omitted():
+    fastest = _mk_kr("a", 1.0, util_mean=80.0)
+    slower = _mk_kr("b", 2.0)  # no util
+    assert _format_comparison(slower, fastest) == "2.00x slower"
+
+
+def test_format_comparison_util_only_on_slower_is_omitted():
+    fastest = _mk_kr("a", 1.0)  # no util
+    slower = _mk_kr("b", 2.0, util_mean=90.0)
+    assert _format_comparison(slower, fastest) == "2.00x slower"
+
+
+def test_format_comparison_identical_util():
+    fastest = _mk_kr("a", 1.0, util_mean=85.0)
+    slower = _mk_kr("b", 1.5, util_mean=85.0)
+    assert _format_comparison(slower, fastest) == "1.50x slower  \u00b7  util 85% (fastest: 85%)"

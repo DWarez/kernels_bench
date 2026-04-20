@@ -7,6 +7,7 @@ import sys
 
 from kernels_bench import __version__
 from kernels_bench.runner import BenchResult, KernelResult
+from kernels_bench.runtime import RunMetrics
 
 # Box-drawing characters
 BOX = {
@@ -130,6 +131,21 @@ def _truncate(text: str, max_len: int) -> str:
     return text
 
 
+def _format_metrics(m: RunMetrics) -> str | None:
+    """Format RunMetrics as a single short line, or None if nothing to show."""
+    parts: list[str] = []
+    if m.peak_memory_mb is not None:
+        if m.peak_memory_mb >= 1024:
+            parts.append(f"peak_mem={m.peak_memory_mb / 1024:.2f} GB")
+        else:
+            parts.append(f"peak_mem={m.peak_memory_mb:.1f} MB")
+    if m.util_mean is not None and m.util_peak is not None:
+        parts.append(f"util={m.util_mean:.0f}% (peak {m.util_peak:.0f}%)")
+    if not parts:
+        return None
+    return "  ".join(parts)
+
+
 def print_results(result: BenchResult) -> None:
     """Print benchmark results in hf-mem box-drawing style."""
     kernel_results = result.kernel_results
@@ -233,6 +249,11 @@ def print_results(result: BenchResult) -> None:
                 f"min={kr.min_ms:.3f}  max={kr.max_ms:.3f}"
             )
             _print_row("", f"{DIM}{stats}{RESET}{COLOR}", total_width, label_width)
+
+            # Metrics line (dimmed, only if any metric was collected)
+            metrics_str = _format_metrics(kr.metrics)
+            if metrics_str:
+                _print_row("", f"{DIM}{metrics_str}{RESET}{COLOR}", total_width, label_width)
 
             # Comparison line
             if is_fastest:

@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 import torch
 
 from kernels_bench.device import DeviceInfo
+from kernels_bench.runtime import RunMetrics
 from kernels_bench.spec import TensorSpec
 from kernels_bench.validate import ValidationReport
 
@@ -24,6 +25,7 @@ class KernelResult:
     kernel_id: str
     params: dict[str, int]
     times_ms: list[float]
+    metrics: RunMetrics = dataclasses.field(default_factory=RunMetrics)
 
     @property
     def mean_ms(self) -> float:
@@ -78,6 +80,7 @@ class BenchResult:
                     "min_ms": kr.min_ms,
                     "max_ms": kr.max_ms,
                     "times_ms": kr.times_ms,
+                    "metrics": kr.metrics.to_dict(),
                 }
                 for kr in self.kernel_results
             ],
@@ -114,27 +117,33 @@ def _timed_loop(
     iterations: int,
     runtime: Runtime,
     on_step: ProgressCallback = None,
-) -> list[float]:
-    """Run warmup + timed iterations, return per-iteration times in ms."""
+) -> tuple[list[float], RunMetrics]:
+    """Run warmup + timed iterations; return per-iter times (ms) and metrics."""
     for i in range(warmup):
         fn(*args)
         if on_step:
             on_step("warmup", i + 1, warmup)
     runtime.synchronize()
 
+    collector = runtime.create_metrics_collector()
+    collector.start()
+
     times: list[float] = []
-    for i in range(iterations):
-        timer = runtime.create_timer()
-        timer.record_start()
-        fn(*args)
-        timer.record_end()
+    try:
+        for i in range(iterations):
+            timer = runtime.create_timer()
+            timer.record_start()
+            fn(*args)
+            timer.record_end()
 
-        runtime.synchronize()
-        times.append(timer.elapsed_ms())
-        if on_step:
-            on_step("bench", i + 1, iterations)
+            runtime.synchronize()
+            times.append(timer.elapsed_ms())
+            if on_step:
+                on_step("bench", i + 1, iterations)
+    finally:
+        collector.stop()
 
-    return times
+    return times, collector.result()
 
 
 def run_benchmark(
@@ -146,7 +155,7 @@ def run_benchmark(
     iterations: int,
     runtime: Runtime,
     on_step: ProgressCallback = None,
-) -> list[float]:
+) -> tuple[list[float], RunMetrics]:
     """Run a user-defined benchmark function (kernel, *inputs, *outputs)."""
     tensors = _allocate_tensors(input_specs, output_specs, runtime.device)
 
@@ -165,7 +174,7 @@ def run_benchmark_quick(
     iterations: int,
     runtime: Runtime,
     on_step: ProgressCallback = None,
-) -> list[float]:
+) -> tuple[list[float], RunMetrics]:
     """Run a kernel function directly with args in spec order.
 
     This is used by the `quick` command — no user-defined bench function needed.

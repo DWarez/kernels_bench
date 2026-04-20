@@ -3,7 +3,14 @@
 import pytest
 import torch
 
-from kernels_bench.runner import KernelResult, _timed_loop, run_benchmark, run_benchmark_quick
+from kernels_bench.runner import (
+    BenchResult,
+    KernelResult,
+    _timed_loop,
+    run_benchmark,
+    run_benchmark_quick,
+)
+from kernels_bench.runtime import RunMetrics
 from kernels_bench.spec import TensorSpec
 
 
@@ -102,3 +109,43 @@ def test_kernel_result_single_iteration():
     assert kr.mean_ms == 1.5
     assert kr.median_ms == 1.5
     assert kr.std_ms == 0.0
+
+
+def test_kernel_result_default_metrics_empty():
+    """Omitting metrics gives an empty RunMetrics rather than None."""
+    kr = KernelResult(kernel_id="test/kernel", params={}, times_ms=[1.0])
+    assert isinstance(kr.metrics, RunMetrics)
+    assert kr.metrics == RunMetrics()
+
+
+def test_bench_result_to_dict_includes_metrics():
+    metrics = RunMetrics(peak_memory_mb=128.0, util_mean=72.5, util_peak=95.0, util_samples=20)
+    kr = KernelResult(
+        kernel_id="test/kernel",
+        params={"M": 1024},
+        times_ms=[1.0, 2.0, 3.0],
+        metrics=metrics,
+    )
+    result = BenchResult(bench_name="b", kernel_results=[kr])
+    d = result.to_dict()
+
+    assert d["results"][0]["metrics"] == {
+        "peak_memory_mb": 128.0,
+        "util_mean": 72.5,
+        "util_peak": 95.0,
+        "util_samples": 20,
+    }
+
+
+def test_bench_result_to_dict_metrics_all_none_when_missing():
+    """KernelResult without explicit metrics still serializes a metrics block."""
+    kr = KernelResult(kernel_id="k", params={}, times_ms=[1.0])
+    result = BenchResult(bench_name="b", kernel_results=[kr])
+    d = result.to_dict()
+    m = d["results"][0]["metrics"]
+    assert m == {
+        "peak_memory_mb": None,
+        "util_mean": None,
+        "util_peak": None,
+        "util_samples": 0,
+    }

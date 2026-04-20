@@ -1,6 +1,14 @@
 """Tests for the display module."""
 
-from kernels_bench.display import _format_params, _make_bar, _pad_right, _truncate, _visible_len
+from kernels_bench.display import (
+    _format_metrics,
+    _format_params,
+    _make_bar,
+    _pad_right,
+    _truncate,
+    _visible_len,
+)
+from kernels_bench.runtime import RunMetrics
 
 
 def test_visible_len_plain():
@@ -61,3 +69,39 @@ def test_truncate_long():
     result = _truncate("a very long string", 10)
     assert len(result) == 10
     assert result.endswith("...")
+
+
+def test_format_metrics_empty():
+    assert _format_metrics(RunMetrics()) is None
+
+
+def test_format_metrics_peak_mem_mb():
+    m = RunMetrics(peak_memory_mb=128.0)
+    assert _format_metrics(m) == "peak_mem=128.0 MB"
+
+
+def test_format_metrics_peak_mem_gb_threshold():
+    # >= 1024 MB switches to GB rendering
+    m = RunMetrics(peak_memory_mb=2048.0)
+    assert _format_metrics(m) == "peak_mem=2.00 GB"
+
+
+def test_format_metrics_peak_mem_just_below_gb():
+    m = RunMetrics(peak_memory_mb=1023.9)
+    assert _format_metrics(m) == "peak_mem=1023.9 MB"
+
+
+def test_format_metrics_util_only():
+    m = RunMetrics(util_mean=66.2, util_peak=98.0, util_samples=30)
+    assert _format_metrics(m) == "util=66% (peak 98%)"
+
+
+def test_format_metrics_util_requires_both_mean_and_peak():
+    # If only one of util_mean/util_peak is set, util is omitted
+    assert _format_metrics(RunMetrics(util_mean=50.0)) is None
+    assert _format_metrics(RunMetrics(util_peak=50.0)) is None
+
+
+def test_format_metrics_combined():
+    m = RunMetrics(peak_memory_mb=512.0, util_mean=75.4, util_peak=99.1, util_samples=40)
+    assert _format_metrics(m) == "peak_mem=512.0 MB  util=75% (peak 99%)"

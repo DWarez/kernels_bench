@@ -10,24 +10,7 @@ import time
 import torch
 
 from kernels_bench.device import DeviceInfo
-from kernels_bench.runtime._base import MetricsCollector, RunMetrics, Runtime, Timer
-
-
-class CUDATimer(Timer):
-    """GPU timer using CUDA events."""
-
-    def __init__(self) -> None:
-        self._start = torch.cuda.Event(enable_timing=True)
-        self._end = torch.cuda.Event(enable_timing=True)
-
-    def record_start(self) -> None:
-        self._start.record()
-
-    def record_end(self) -> None:
-        self._end.record()
-
-    def elapsed_ms(self) -> float:
-        return self._start.elapsed_time(self._end)
+from kernels_bench.runtime._base import MetricsCollector, RunMetrics, Runtime
 
 
 class CUDAMetricsCollector(MetricsCollector):
@@ -111,9 +94,6 @@ class CUDARuntime(Runtime):
 
     def synchronize(self) -> None:
         torch.cuda.synchronize()
-
-    def create_timer(self) -> CUDATimer:
-        return CUDATimer()
 
     def create_metrics_collector(self) -> CUDAMetricsCollector:
         return CUDAMetricsCollector()

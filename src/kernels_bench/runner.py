@@ -197,7 +197,13 @@ def _timed_loop(
     When collect_metrics is False, the runtime's real collector is replaced with
     a no-op — peak_memory / util fields come back as None.
     """
-    timer = Timer(stmt="fn(*args)", globals={"fn": fn, "args": args})
+    # We inject runtime.synchronize() into the stmt so each measurement bounds
+    # the device queue. torch.utils.benchmark.Timer already synchronizes for
+    # CUDA, but not for MPS — adding our own sync makes the timing path uniform.
+    timer = Timer(
+        stmt="fn(*args); sync()",
+        globals={"fn": fn, "args": args, "sync": runtime.synchronize},
+    )
 
     compile_m = timer.timeit(1)
     compile_ms = compile_m.mean * 1000.0

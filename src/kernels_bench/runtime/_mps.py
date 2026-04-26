@@ -4,37 +4,11 @@ from __future__ import annotations
 
 import contextlib
 import platform
-import time
 
 import torch
 
 from kernels_bench.device import DeviceInfo
-from kernels_bench.runtime._base import Runtime, Timer
-
-
-class MPSTimer(Timer):
-    """Timer for MPS using host-side wall-clock with device synchronization.
-
-    MPS exposes torch.mps.Event with enable_timing, but the implementation
-    is unreliable for rapid successive measurements (event ID reuse causes
-    spurious "End event was not recorded after start event" errors). We use
-    perf_counter with synchronization barriers instead.
-    """
-
-    def __init__(self) -> None:
-        self._start: float = 0.0
-        self._end: float = 0.0
-
-    def record_start(self) -> None:
-        torch.mps.synchronize()
-        self._start = time.perf_counter()
-
-    def record_end(self) -> None:
-        torch.mps.synchronize()
-        self._end = time.perf_counter()
-
-    def elapsed_ms(self) -> float:
-        return (self._end - self._start) * 1000.0
+from kernels_bench.runtime._base import Runtime
 
 
 class MPSRuntime(Runtime):
@@ -53,9 +27,6 @@ class MPSRuntime(Runtime):
 
     def synchronize(self) -> None:
         torch.mps.synchronize()
-
-    def create_timer(self) -> MPSTimer:
-        return MPSTimer()
 
     def get_device_info(self) -> DeviceInfo:
         if not self.is_available():

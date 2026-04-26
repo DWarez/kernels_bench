@@ -40,32 +40,6 @@ def test_runtime_synchronize(runtime):
 
 
 @pytest.mark.gpu
-def test_runtime_create_timer(runtime):
-    timer = runtime.create_timer()
-    # Should have the Timer interface
-    assert hasattr(timer, "record_start")
-    assert hasattr(timer, "record_end")
-    assert hasattr(timer, "elapsed_ms")
-
-
-@pytest.mark.gpu
-def test_runtime_timer_measures_time(runtime, device):
-    """Timer should measure non-negative time for a real GPU operation."""
-    import torch
-
-    timer = runtime.create_timer()
-    x = torch.randn(512, 512, device=device)
-
-    timer.record_start()
-    _ = x @ x
-    timer.record_end()
-    runtime.synchronize()
-
-    elapsed = timer.elapsed_ms()
-    assert elapsed >= 0.0
-
-
-@pytest.mark.gpu
 def test_runtime_get_device_info(runtime):
     info = runtime.get_device_info()
     assert isinstance(info, DeviceInfo)
@@ -101,9 +75,6 @@ def test_runtime_base_create_metrics_collector_defaults_to_noop():
 
         def synchronize(self) -> None:
             pass
-
-        def create_timer(self):  # pragma: no cover — not exercised here
-            raise NotImplementedError
 
         def get_device_info(self):  # pragma: no cover
             raise NotImplementedError

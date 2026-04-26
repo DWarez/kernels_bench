@@ -9,22 +9,6 @@ from typing import Any
 from kernels_bench.device import DeviceInfo
 
 
-class Timer(ABC):
-    """Opaque handle for recording GPU-side elapsed time."""
-
-    @abstractmethod
-    def record_start(self) -> None:
-        """Mark the start of a timed region on the device timeline."""
-
-    @abstractmethod
-    def record_end(self) -> None:
-        """Mark the end of a timed region on the device timeline."""
-
-    @abstractmethod
-    def elapsed_ms(self) -> float:
-        """Return elapsed time in milliseconds between start and end."""
-
-
 @dataclasses.dataclass(frozen=True)
 class RunMetrics:
     """Device-side metrics collected during a benchmark run.
@@ -103,10 +87,6 @@ class Runtime(ABC):
     @abstractmethod
     def synchronize(self) -> None:
         """Block until all pending device operations complete."""
-
-    @abstractmethod
-    def create_timer(self) -> Timer:
-        """Create a new timer for measuring device-side execution time."""
 
     @abstractmethod
     def get_device_info(self) -> DeviceInfo:

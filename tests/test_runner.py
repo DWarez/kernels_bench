@@ -32,9 +32,12 @@ class FakeKernel:
 @pytest.mark.gpu
 def test_timed_loop_returns_correct_count(runtime, device):
     x = torch.randn(16, 16, device=device)
-    times, _metrics = _timed_loop(_noop, [x], warmup=2, iterations=10, runtime=runtime)
+    times, _metrics, compile_ms = _timed_loop(
+        _noop, [x], warmup=2, iterations=10, runtime=runtime
+    )
     assert len(times) == 10
     assert all(t >= 0 for t in times)
+    assert compile_ms >= 0
 
 
 @pytest.mark.gpu
@@ -62,7 +65,7 @@ def test_run_benchmark(runtime, device):
         TensorSpec("y", shape=(32, 32), dtype=torch.float16, device=device, role="output")
     ]
 
-    times, _metrics = run_benchmark(
+    times, _metrics, _compile = run_benchmark(
         bench_fn=_copy_kernel_fn,
         kernel=None,  # not used by _copy_kernel_fn
         input_specs=input_specs,
@@ -80,7 +83,7 @@ def test_run_benchmark_quick(runtime, device):
         TensorSpec("y", shape=(32, 32), dtype=torch.float16, device=device, role="output"),
         TensorSpec("x", shape=(32, 32), dtype=torch.float16, device=device, role="input"),
     ]
-    times, _metrics = run_benchmark_quick(
+    times, _metrics, _compile = run_benchmark_quick(
         kernel=FakeKernel(),
         fn_name="double",
         specs=specs,
@@ -98,7 +101,7 @@ def test_run_benchmark_quick_collect_metrics_false_returns_empty(runtime, device
         TensorSpec("y", shape=(32, 32), dtype=torch.float16, device=device, role="output"),
         TensorSpec("x", shape=(32, 32), dtype=torch.float16, device=device, role="input"),
     ]
-    times, metrics = run_benchmark_quick(
+    times, metrics, _compile = run_benchmark_quick(
         kernel=FakeKernel(),
         fn_name="double",
         specs=specs,
@@ -172,3 +175,15 @@ def test_bench_result_to_dict_metrics_all_none_when_missing():
         "util_peak": None,
         "util_samples": 0,
     }
+
+
+def test_bench_result_to_dict_includes_compile_ms():
+    kr = KernelResult(kernel_id="k", params={}, times_ms=[1.0], compile_ms=4.2)
+    d = BenchResult(bench_name="b", kernel_results=[kr]).to_dict()
+    assert d["results"][0]["compile_ms"] == 4.2
+
+
+def test_bench_result_to_dict_compile_ms_none_when_missing():
+    kr = KernelResult(kernel_id="k", params={}, times_ms=[1.0])
+    d = BenchResult(bench_name="b", kernel_results=[kr]).to_dict()
+    assert d["results"][0]["compile_ms"] is None

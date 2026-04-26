@@ -160,7 +160,7 @@ class Bench:
                     resolved_inputs = _resolve_specs(self.inputs, param_set)
                     resolved_outputs = _resolve_specs(self.outputs, param_set)
 
-                    times, metrics = run_benchmark(
+                    times, metrics, compile_ms = run_benchmark(
                         bench_fn=self._fn,
                         kernel=kernel,
                         input_specs=resolved_inputs,
@@ -178,6 +178,7 @@ class Bench:
                             params=param_set,
                             times_ms=times,
                             metrics=metrics,
+                            compile_ms=compile_ms,
                         )
                     )
 

@@ -250,7 +250,7 @@ def quick(
             warmup_tid = progress.add_task(f"{kernel_id} warmup", total=warmup)
             bench_tid = progress.add_task(f"{kernel_id} bench", total=iterations)
             on_step = make_on_step(progress, warmup_tid, bench_tid)
-            times, metrics = run_benchmark_quick(
+            times, metrics, compile_ms = run_benchmark_quick(
                 kernel=kernel,
                 fn_name=fn,
                 specs=specs,
@@ -261,7 +261,13 @@ def quick(
                 collect_metrics=not no_metrics,
             )
             all_results.append(
-                KernelResult(kernel_id=kernel_id, params={}, times_ms=times, metrics=metrics)
+                KernelResult(
+                    kernel_id=kernel_id,
+                    params={},
+                    times_ms=times,
+                    metrics=metrics,
+                    compile_ms=compile_ms,
+                )
             )
 
     result = BenchResult(

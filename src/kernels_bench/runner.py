@@ -28,6 +28,7 @@ class KernelResult:
     params: dict[str, int]
     times_ms: list[float]
     metrics: RunMetrics = dataclasses.field(default_factory=RunMetrics)
+    compile_ms: float | None = None
 
     @property
     def mean_ms(self) -> float:
@@ -82,6 +83,7 @@ class BenchResult:
                     "min_ms": kr.min_ms,
                     "max_ms": kr.max_ms,
                     "times_ms": kr.times_ms,
+                    "compile_ms": kr.compile_ms,
                     "metrics": kr.metrics.to_dict(),
                 }
                 for kr in self.kernel_results
@@ -120,17 +122,23 @@ def _timed_loop(
     runtime: Runtime,
     on_step: ProgressCallback = None,
     collect_metrics: bool = True,
-) -> tuple[list[float], RunMetrics]:
-    """Run warmup + timed iterations; return per-iter times (ms) and metrics.
+) -> tuple[list[float], RunMetrics, float]:
+    """Run compile + warmup + timed iterations.
 
-    Uses torch.utils.benchmark.Timer for the per-iteration measurement: it
-    handles CUDA synchronization, autograd state and stream context for us,
-    which makes timings more robust than a manual cuda.Event loop.
+    Returns (per-iter times in ms, metrics, compile_ms). The first call is
+    timed separately as compile_ms so JIT/autotune cost is visible instead of
+    being absorbed (or not) by the warmup window.
+
+    Uses torch.utils.benchmark.Timer for every measurement: it handles CUDA
+    synchronization, autograd state and stream context for us.
 
     When collect_metrics is False, the runtime's real collector is replaced with
     a no-op — peak_memory / util fields come back as None.
     """
     timer = Timer(stmt="fn(*args)", globals={"fn": fn, "args": args})
+
+    compile_m = timer.timeit(1)
+    compile_ms = compile_m.mean * 1000.0
 
     for i in range(warmup):
         timer.timeit(1)
@@ -151,7 +159,7 @@ def _timed_loop(
     finally:
         collector.stop()
 
-    return times, collector.result()
+    return times, collector.result(), compile_ms
 
 
 def run_benchmark(
@@ -164,7 +172,7 @@ def run_benchmark(
     runtime: Runtime,
     on_step: ProgressCallback = None,
     collect_metrics: bool = True,
-) -> tuple[list[float], RunMetrics]:
+) -> tuple[list[float], RunMetrics, float]:
     """Run a user-defined benchmark function (kernel, *inputs, *outputs)."""
     tensors = _allocate_tensors(input_specs, output_specs, runtime.device)
 
@@ -184,7 +192,7 @@ def run_benchmark_quick(
     runtime: Runtime,
     on_step: ProgressCallback = None,
     collect_metrics: bool = True,
-) -> tuple[list[float], RunMetrics]:
+) -> tuple[list[float], RunMetrics, float]:
     """Run a kernel function directly with args in spec order.
 
     This is used by the `quick` command — no user-defined bench function needed.

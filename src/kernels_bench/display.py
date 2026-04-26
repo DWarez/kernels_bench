@@ -272,6 +272,15 @@ def print_results(result: BenchResult) -> None:
             if metrics_str:
                 _print_row("", f"{DIM}{metrics_str}{RESET}{COLOR}", total_width, label_width)
 
+            # Compile time (dimmed) — first-call cost separated from steady-state.
+            if kr.compile_ms is not None:
+                _print_row(
+                    "",
+                    f"{DIM}compile={kr.compile_ms:.3f} ms{RESET}{COLOR}",
+                    total_width,
+                    label_width,
+                )
+
             # Comparison line
             if is_fastest:
                 _print_row("", f"{GREEN}FASTEST{RESET}{COLOR}", total_width, label_width)

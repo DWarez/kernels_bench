@@ -91,6 +91,29 @@ def test_run_benchmark_quick(runtime, device):
     assert len(times) == 5
 
 
+@pytest.mark.gpu
+def test_run_benchmark_quick_collect_metrics_false_returns_empty(runtime, device):
+    """collect_metrics=False swaps in the noop collector — all fields are empty."""
+    specs = [
+        TensorSpec("y", shape=(32, 32), dtype=torch.float16, device=device, role="output"),
+        TensorSpec("x", shape=(32, 32), dtype=torch.float16, device=device, role="input"),
+    ]
+    times, metrics = run_benchmark_quick(
+        kernel=FakeKernel(),
+        fn_name="double",
+        specs=specs,
+        warmup=2,
+        iterations=5,
+        runtime=runtime,
+        collect_metrics=False,
+    )
+    assert len(times) == 5
+    # Every field stays at its default — we didn't sample or read memory stats.
+    from kernels_bench.runtime import RunMetrics as _RM
+
+    assert metrics == _RM()
+
+
 def test_kernel_result_stats():
     kr = KernelResult(
         kernel_id="test/kernel",

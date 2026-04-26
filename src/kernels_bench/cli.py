@@ -115,6 +115,12 @@ def main() -> None:
 @click.option("--validate", is_flag=True, help="Validate output correctness across kernels.")
 @click.option("--atol", default=1e-3, show_default=True, help="Absolute tolerance for validation.")
 @click.option("--rtol", default=1e-3, show_default=True, help="Relative tolerance for validation.")
+@click.option(
+    "--no-metrics",
+    "no_metrics",
+    is_flag=True,
+    help="Skip collecting peak memory and GPU utilization metrics.",
+)
 def run(
     bench_file: str,
     kernels: str,
@@ -124,6 +130,7 @@ def run(
     validate: bool,
     atol: float,
     rtol: float,
+    no_metrics: bool,
 ) -> None:
     """Run a benchmark defined in BENCH_FILE against the specified kernels."""
     bench = _load_bench_from_file(bench_file)
@@ -136,6 +143,7 @@ def run(
         validate=validate,
         atol=atol,
         rtol=rtol,
+        collect_metrics=not no_metrics,
     )
     _handle_output(result, output)
 
@@ -178,6 +186,12 @@ def run(
 @click.option("--validate", is_flag=True, help="Validate output correctness across kernels.")
 @click.option("--atol", default=1e-3, show_default=True, help="Absolute tolerance for validation.")
 @click.option("--rtol", default=1e-3, show_default=True, help="Relative tolerance for validation.")
+@click.option(
+    "--no-metrics",
+    "no_metrics",
+    is_flag=True,
+    help="Skip collecting peak memory and GPU utilization metrics.",
+)
 def quick(
     kernels: str,
     fn: str,
@@ -188,6 +202,7 @@ def quick(
     validate: bool,
     atol: float,
     rtol: float,
+    no_metrics: bool,
 ) -> None:
     """Benchmark a kernel function directly — no bench file needed.
 
@@ -243,6 +258,7 @@ def quick(
                 iterations=iterations,
                 runtime=runtime,
                 on_step=on_step,
+                collect_metrics=not no_metrics,
             )
             all_results.append(
                 KernelResult(kernel_id=kernel_id, params={}, times_ms=times, metrics=metrics)

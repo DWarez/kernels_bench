@@ -11,6 +11,7 @@ import torch
 
 from kernels_bench.device import DeviceInfo
 from kernels_bench.runtime import RunMetrics
+from kernels_bench.runtime._base import _NoopMetricsCollector
 from kernels_bench.spec import TensorSpec
 from kernels_bench.validate import ValidationReport
 
@@ -117,15 +118,20 @@ def _timed_loop(
     iterations: int,
     runtime: Runtime,
     on_step: ProgressCallback = None,
+    collect_metrics: bool = True,
 ) -> tuple[list[float], RunMetrics]:
-    """Run warmup + timed iterations; return per-iter times (ms) and metrics."""
+    """Run warmup + timed iterations; return per-iter times (ms) and metrics.
+
+    When collect_metrics is False, the runtime's real collector is replaced with
+    a no-op — peak_memory / util fields come back as None.
+    """
     for i in range(warmup):
         fn(*args)
         if on_step:
             on_step("warmup", i + 1, warmup)
     runtime.synchronize()
 
-    collector = runtime.create_metrics_collector()
+    collector = runtime.create_metrics_collector() if collect_metrics else _NoopMetricsCollector()
     collector.start()
 
     times: list[float] = []
@@ -155,6 +161,7 @@ def run_benchmark(
     iterations: int,
     runtime: Runtime,
     on_step: ProgressCallback = None,
+    collect_metrics: bool = True,
 ) -> tuple[list[float], RunMetrics]:
     """Run a user-defined benchmark function (kernel, *inputs, *outputs)."""
     tensors = _allocate_tensors(input_specs, output_specs, runtime.device)
@@ -163,7 +170,7 @@ def run_benchmark(
     args.extend(tensors[s.name] for s in input_specs)
     args.extend(tensors[s.name] for s in output_specs)
 
-    return _timed_loop(bench_fn, args, warmup, iterations, runtime, on_step)
+    return _timed_loop(bench_fn, args, warmup, iterations, runtime, on_step, collect_metrics)
 
 
 def run_benchmark_quick(
@@ -174,6 +181,7 @@ def run_benchmark_quick(
     iterations: int,
     runtime: Runtime,
     on_step: ProgressCallback = None,
+    collect_metrics: bool = True,
 ) -> tuple[list[float], RunMetrics]:
     """Run a kernel function directly with args in spec order.
 
@@ -182,4 +190,4 @@ def run_benchmark_quick(
     """
     fn = getattr(kernel, fn_name)
     tensors = [spec.allocate(runtime.device) for spec in specs]
-    return _timed_loop(fn, tensors, warmup, iterations, runtime, on_step)
+    return _timed_loop(fn, tensors, warmup, iterations, runtime, on_step, collect_metrics)

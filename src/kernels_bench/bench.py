@@ -96,6 +96,7 @@ class Bench:
         atol: float = 1e-3,
         rtol: float = 1e-3,
         runtime: Runtime | None = None,
+        collect_metrics: bool = True,
     ) -> BenchResult:
         """Run the benchmark for all kernels and param combinations.
 
@@ -107,6 +108,8 @@ class Bench:
             atol: absolute tolerance for validation
             rtol: relative tolerance for validation
             runtime: GPU runtime to use (auto-detected if not provided)
+            collect_metrics: if True (default), collect peak memory and GPU utilization
+                during each timed window. Set False to skip the background sampler.
         """
         if self._fn is None:
             raise RuntimeError("no benchmark function registered — use @bench.fn")
@@ -166,6 +169,7 @@ class Bench:
                         iterations=iterations,
                         runtime=runtime,
                         on_step=on_step,
+                        collect_metrics=collect_metrics,
                     )
 
                     all_results.append(

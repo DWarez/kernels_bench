@@ -53,6 +53,20 @@ kernels-bench quick \
 
 The `--validate` flag runs each kernel once on the same input data and checks that outputs match across kernels (using `torch.allclose`). Tolerance is configurable with `--atol` and `--rtol`.
 
+### Heavier workloads
+
+Any kernel on the Hub works — here's Flash Attention 2 with sequence length 8k:
+
+```bash
+kernels-bench quick \
+  -k kernels-community/flash-attn \
+  --fn flash_attn_func \
+  --arg q:4,8192,32,128:float16 \
+  --arg k:4,8192,32,128:float16 \
+  --arg v:4,8192,32,128:float16 \
+  -w 10 -n 100
+```
+
 ### Custom benchmarks with a bench file
 
 For more control — parameter sweeps, custom logic, multiple steps — write a bench file:
@@ -137,15 +151,30 @@ Results are displayed in a box-drawing table showing timing, comparison bars, an
 ├────────────────────────────┬────────────────────────────────────────────────┤
 │ kernel-a                   │ 0.100 ms  ████████████████████████░░░░░░░░░░░░ │
 │                            │ mean=0.100  std=0.002  min=0.097  max=0.102    │
+│                            │ peak_mem=64.0 MB  util=87% (peak 99%)          │
 │                            │ FASTEST                                        │
 ├────────────────────────────┼────────────────────────────────────────────────┤
 │ kernel-b                   │ 0.128 ms  ██████████████████████████████████   │
 │                            │ mean=0.128  std=0.002  min=0.124  max=0.131    │
-│                            │ 1.28x slower                                   │
+│                            │ peak_mem=64.0 MB  util=72% (peak 94%)          │
+│                            │ 1.28x slower  ·  util 72% (fastest: 87%)       │
 └────────────────────────────┴────────────────────────────────────────────────┘
 ```
 
 When `--validate` is used, a validation section appears before the timing results showing PASS/FAIL for each kernel pair with max absolute/relative differences.
+
+### Metrics
+
+On CUDA, each run automatically collects:
+
+- **`peak_mem`** — peak device memory allocated during the timed window (`torch.cuda.max_memory_allocated`).
+- **`util`** — mean and peak GPU utilization (SM-busy %) sampled via NVML while the kernel runs. Reported only when the window is long enough to collect ≥3 samples.
+
+When multiple kernels are compared, the slowdown line also shows the slower kernel's util next to the fastest's. That makes it easy to tell whether a slower kernel is *inefficient* (lower util) or just *doing more work* (similar/higher util than the fastest).
+
+Pass `--no-metrics` to skip collection entirely — useful if you want zero overhead or are troubleshooting NVML.
+
+Metrics for MPS backends are not yet collected; those fields stay `null` in the JSON export.
 
 ## JSON export
 
@@ -181,6 +210,7 @@ kernels-bench run <bench-file> [options]    # benchmark with a bench file
 | `--validate` | Check output correctness across kernels |
 | `--atol` | Absolute tolerance for validation (default: 1e-3) |
 | `--rtol` | Relative tolerance for validation (default: 1e-3) |
+| `--no-metrics` | Skip collecting peak memory and GPU utilization |
 
 ### `quick` specific options
 

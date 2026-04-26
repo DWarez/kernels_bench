@@ -8,6 +8,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 import torch
+from torch.utils.benchmark import Timer
 
 from kernels_bench.device import DeviceInfo
 from kernels_bench.runtime import RunMetrics
@@ -122,11 +123,17 @@ def _timed_loop(
 ) -> tuple[list[float], RunMetrics]:
     """Run warmup + timed iterations; return per-iter times (ms) and metrics.
 
+    Uses torch.utils.benchmark.Timer for the per-iteration measurement: it
+    handles CUDA synchronization, autograd state and stream context for us,
+    which makes timings more robust than a manual cuda.Event loop.
+
     When collect_metrics is False, the runtime's real collector is replaced with
     a no-op — peak_memory / util fields come back as None.
     """
+    timer = Timer(stmt="fn(*args)", globals={"fn": fn, "args": args})
+
     for i in range(warmup):
-        fn(*args)
+        timer.timeit(1)
         if on_step:
             on_step("warmup", i + 1, warmup)
     runtime.synchronize()
@@ -137,13 +144,8 @@ def _timed_loop(
     times: list[float] = []
     try:
         for i in range(iterations):
-            timer = runtime.create_timer()
-            timer.record_start()
-            fn(*args)
-            timer.record_end()
-
-            runtime.synchronize()
-            times.append(timer.elapsed_ms())
+            m = timer.timeit(1)
+            times.append(m.mean * 1000.0)
             if on_step:
                 on_step("bench", i + 1, iterations)
     finally:

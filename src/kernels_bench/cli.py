@@ -121,6 +121,11 @@ def main() -> None:
     is_flag=True,
     help="Skip collecting peak memory and GPU utilization metrics.",
 )
+@click.option(
+    "--profile",
+    is_flag=True,
+    help="Run torch.profiler after timing and print the per-op breakdown.",
+)
 def run(
     bench_file: str,
     kernels: str,
@@ -131,6 +136,7 @@ def run(
     atol: float,
     rtol: float,
     no_metrics: bool,
+    profile: bool,
 ) -> None:
     """Run a benchmark defined in BENCH_FILE against the specified kernels."""
     bench = _load_bench_from_file(bench_file)
@@ -144,6 +150,7 @@ def run(
         atol=atol,
         rtol=rtol,
         collect_metrics=not no_metrics,
+        profile=profile,
     )
     _handle_output(result, output)
 
@@ -192,6 +199,11 @@ def run(
     is_flag=True,
     help="Skip collecting peak memory and GPU utilization metrics.",
 )
+@click.option(
+    "--profile",
+    is_flag=True,
+    help="Run torch.profiler after timing and print the per-op breakdown.",
+)
 def quick(
     kernels: str,
     fn: str,
@@ -203,6 +215,7 @@ def quick(
     atol: float,
     rtol: float,
     no_metrics: bool,
+    profile: bool,
 ) -> None:
     """Benchmark a kernel function directly — no bench file needed.
 
@@ -250,7 +263,7 @@ def quick(
             warmup_tid = progress.add_task(f"{kernel_id} warmup", total=warmup)
             bench_tid = progress.add_task(f"{kernel_id} bench", total=iterations)
             on_step = make_on_step(progress, warmup_tid, bench_tid)
-            times, metrics = run_benchmark_quick(
+            times, metrics, compile_ms = run_benchmark_quick(
                 kernel=kernel,
                 fn_name=fn,
                 specs=specs,
@@ -259,9 +272,17 @@ def quick(
                 runtime=runtime,
                 on_step=on_step,
                 collect_metrics=not no_metrics,
+                profile=profile,
+                profile_label=kernel_id,
             )
             all_results.append(
-                KernelResult(kernel_id=kernel_id, params={}, times_ms=times, metrics=metrics)
+                KernelResult(
+                    kernel_id=kernel_id,
+                    params={},
+                    times_ms=times,
+                    metrics=metrics,
+                    compile_ms=compile_ms,
+                )
             )
 
     result = BenchResult(

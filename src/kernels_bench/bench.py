@@ -97,6 +97,7 @@ class Bench:
         rtol: float = 1e-3,
         runtime: Runtime | None = None,
         collect_metrics: bool = True,
+        profile: bool = False,
     ) -> BenchResult:
         """Run the benchmark for all kernels and param combinations.
 
@@ -160,7 +161,7 @@ class Bench:
                     resolved_inputs = _resolve_specs(self.inputs, param_set)
                     resolved_outputs = _resolve_specs(self.outputs, param_set)
 
-                    times, metrics = run_benchmark(
+                    times, metrics, compile_ms = run_benchmark(
                         bench_fn=self._fn,
                         kernel=kernel,
                         input_specs=resolved_inputs,
@@ -170,6 +171,8 @@ class Bench:
                         runtime=runtime,
                         on_step=on_step,
                         collect_metrics=collect_metrics,
+                        profile=profile,
+                        profile_label=label,
                     )
 
                     all_results.append(
@@ -178,6 +181,7 @@ class Bench:
                             params=param_set,
                             times_ms=times,
                             metrics=metrics,
+                            compile_ms=compile_ms,
                         )
                     )
 

@@ -20,6 +20,15 @@ if TYPE_CHECKING:
     from kernels_bench.runtime import Runtime
 
 
+def _quantile(xs: list[float], q: float) -> float:
+    """Quantile via nearest-rank on sorted values. Matches HF kernels-benchmarks."""
+    if not xs:
+        return float("nan")
+    s = sorted(xs)
+    n = len(s) - 1
+    return s[max(0, min(n, int(q * n)))]
+
+
 @dataclasses.dataclass(frozen=True)
 class KernelResult:
     """Timing results for a single kernel on a single param combination."""
@@ -49,6 +58,27 @@ class KernelResult:
     @property
     def max_ms(self) -> float:
         return max(self.times_ms)
+
+    @property
+    def p10_ms(self) -> float:
+        return _quantile(self.times_ms, 0.10)
+
+    @property
+    def p90_ms(self) -> float:
+        return _quantile(self.times_ms, 0.90)
+
+    @property
+    def iqr_ms(self) -> float:
+        """Interquartile range (p75 - p25) — a robust measure of variance."""
+        return _quantile(self.times_ms, 0.75) - _quantile(self.times_ms, 0.25)
+
+    @property
+    def has_warnings(self) -> bool:
+        """True when IQR > 10% of the median — flags a noisy measurement."""
+        med = self.median_ms
+        if med <= 0:
+            return False
+        return (self.iqr_ms / med) > 0.10
 
 
 @dataclasses.dataclass(frozen=True)
@@ -82,6 +112,10 @@ class BenchResult:
                     "std_ms": kr.std_ms,
                     "min_ms": kr.min_ms,
                     "max_ms": kr.max_ms,
+                    "p10_ms": kr.p10_ms,
+                    "p90_ms": kr.p90_ms,
+                    "iqr_ms": kr.iqr_ms,
+                    "has_warnings": kr.has_warnings,
                     "times_ms": kr.times_ms,
                     "compile_ms": kr.compile_ms,
                     "metrics": kr.metrics.to_dict(),

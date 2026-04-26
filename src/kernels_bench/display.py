@@ -260,11 +260,15 @@ def print_results(result: BenchResult) -> None:
                 timing = f"{median_text}  {bar}"
             _print_row(kernel_label, timing, total_width, label_width)
 
-            # Stats line (dimmed)
+            # Stats line (dimmed): quantiles + IQR are more robust to GPU
+            # tail latency than mean/std/min/max. A noisy run gets a warning
+            # marker so the reader knows the median is suspect.
             stats = (
-                f"mean={kr.mean_ms:.3f}  std={kr.std_ms:.3f}  "
-                f"min={kr.min_ms:.3f}  max={kr.max_ms:.3f}"
+                f"p10={kr.p10_ms:.3f}  p50={kr.median_ms:.3f}  p90={kr.p90_ms:.3f}  "
+                f"iqr={kr.iqr_ms:.3f}"
             )
+            if kr.has_warnings:
+                stats += f"{RESET}{COLOR}  {RED}⚠ noisy{RESET}{DIM}"
             _print_row("", f"{DIM}{stats}{RESET}{COLOR}", total_width, label_width)
 
             # Metrics line (dimmed, only if any metric was collected)

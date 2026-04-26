@@ -137,6 +137,37 @@ def test_kernel_result_single_iteration():
     assert kr.std_ms == 0.0
 
 
+def test_kernel_result_quantiles():
+    # Sorted: 1..11 → p10≈1, p50≈6, p90≈10. Nearest-rank quantile.
+    kr = KernelResult(
+        kernel_id="k", params={}, times_ms=[float(i) for i in range(1, 12)]
+    )
+    assert kr.p10_ms == 2.0
+    assert kr.median_ms == 6.0
+    assert kr.p90_ms == 10.0
+    # Nearest-rank with n=10: p25 → s[2]=3, p75 → s[7]=8 → IQR = 5.
+    assert kr.iqr_ms == 5.0
+
+
+def test_kernel_result_has_warnings_noisy():
+    # Wide spread: median 1.0, p25=0.5, p75=10 → IQR/median = 9.5 → noisy.
+    kr = KernelResult(kernel_id="k", params={}, times_ms=[0.5, 0.5, 1.0, 10.0, 10.0])
+    assert kr.has_warnings is True
+
+
+def test_kernel_result_has_warnings_quiet():
+    kr = KernelResult(
+        kernel_id="k", params={}, times_ms=[1.00, 1.01, 1.00, 1.01, 1.00, 1.01]
+    )
+    assert kr.has_warnings is False
+
+
+def test_kernel_result_has_warnings_zero_median():
+    # Defensive: never divide by zero.
+    kr = KernelResult(kernel_id="k", params={}, times_ms=[0.0, 0.0, 0.0])
+    assert kr.has_warnings is False
+
+
 def test_kernel_result_default_metrics_empty():
     """Omitting metrics gives an empty RunMetrics rather than None."""
     kr = KernelResult(kernel_id="test/kernel", params={}, times_ms=[1.0])

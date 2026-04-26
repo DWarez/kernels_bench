@@ -8,6 +8,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 import torch
+from torch.profiler import ProfilerActivity, profile, record_function
 from torch.utils.benchmark import Timer
 
 from kernels_bench.device import DeviceInfo
@@ -148,6 +149,33 @@ def _allocate_tensors(
 ProgressCallback = Callable[[str, int, int], None] | None
 
 
+def profile_call(
+    fn: Callable[..., Any],
+    args: list[Any],
+    runs: int = 3,
+    label: str = "",
+    row_limit: int = 20,
+) -> str:
+    """Run torch.profiler over a few invocations and return the key_averages table.
+
+    Captures CPU/CUDA op time, kernel launches and memory ops — answers
+    "where is the time going?" in a way the SM-util sampler can't.
+    """
+    activities = [ProfilerActivity.CPU]
+    if torch.cuda.is_available():
+        activities.append(ProfilerActivity.CUDA)
+
+    with (
+        profile(activities=activities, record_shapes=True, with_stack=False) as prof,
+        record_function(label or "kernel"),
+    ):
+        for _ in range(runs):
+            fn(*args)
+
+    sort_key = "cuda_time_total" if torch.cuda.is_available() else "cpu_time_total"
+    return prof.key_averages().table(sort_by=sort_key, row_limit=row_limit)
+
+
 def _timed_loop(
     fn: Callable[..., Any],
     args: list[Any],
@@ -206,6 +234,8 @@ def run_benchmark(
     runtime: Runtime,
     on_step: ProgressCallback = None,
     collect_metrics: bool = True,
+    profile: bool = False,
+    profile_label: str = "",
 ) -> tuple[list[float], RunMetrics, float]:
     """Run a user-defined benchmark function (kernel, *inputs, *outputs)."""
     tensors = _allocate_tensors(input_specs, output_specs, runtime.device)
@@ -214,7 +244,11 @@ def run_benchmark(
     args.extend(tensors[s.name] for s in input_specs)
     args.extend(tensors[s.name] for s in output_specs)
 
-    return _timed_loop(bench_fn, args, warmup, iterations, runtime, on_step, collect_metrics)
+    result = _timed_loop(bench_fn, args, warmup, iterations, runtime, on_step, collect_metrics)
+    if profile:
+        print(f"\nPROFILE TRACE: {profile_label or 'kernel'}")
+        print(profile_call(bench_fn, args, label=profile_label))
+    return result
 
 
 def run_benchmark_quick(
@@ -226,6 +260,8 @@ def run_benchmark_quick(
     runtime: Runtime,
     on_step: ProgressCallback = None,
     collect_metrics: bool = True,
+    profile: bool = False,
+    profile_label: str = "",
 ) -> tuple[list[float], RunMetrics, float]:
     """Run a kernel function directly with args in spec order.
 
@@ -234,4 +270,8 @@ def run_benchmark_quick(
     """
     fn = getattr(kernel, fn_name)
     tensors = [spec.allocate(runtime.device) for spec in specs]
-    return _timed_loop(fn, tensors, warmup, iterations, runtime, on_step, collect_metrics)
+    result = _timed_loop(fn, tensors, warmup, iterations, runtime, on_step, collect_metrics)
+    if profile:
+        print(f"\nPROFILE TRACE: {profile_label or fn_name}")
+        print(profile_call(fn, tensors, label=profile_label or fn_name))
+    return result

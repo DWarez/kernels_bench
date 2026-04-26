@@ -7,6 +7,7 @@ from kernels_bench.runner import (
     BenchResult,
     KernelResult,
     _timed_loop,
+    profile_call,
     run_benchmark,
     run_benchmark_quick,
 )
@@ -212,6 +213,19 @@ def test_bench_result_to_dict_includes_compile_ms():
     kr = KernelResult(kernel_id="k", params={}, times_ms=[1.0], compile_ms=4.2)
     d = BenchResult(bench_name="b", kernel_results=[kr]).to_dict()
     assert d["results"][0]["compile_ms"] == 4.2
+
+
+def test_profile_call_returns_table_string():
+    """profile_call should produce a non-empty op breakdown for a trivial fn."""
+    x = torch.randn(8, 8)
+
+    def add_one(t):
+        return t + 1
+
+    table = profile_call(add_one, [x], runs=2, label="add_one")
+    assert isinstance(table, str)
+    # key_averages tables include a "Self" header — cheap presence check.
+    assert "Self" in table
 
 
 def test_bench_result_to_dict_compile_ms_none_when_missing():

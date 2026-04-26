@@ -97,6 +97,7 @@ class Bench:
         rtol: float = 1e-3,
         runtime: Runtime | None = None,
         collect_metrics: bool = True,
+        profile: bool = False,
     ) -> BenchResult:
         """Run the benchmark for all kernels and param combinations.
 
@@ -170,6 +171,8 @@ class Bench:
                         runtime=runtime,
                         on_step=on_step,
                         collect_metrics=collect_metrics,
+                        profile=profile,
+                        profile_label=label,
                     )
 
                     all_results.append(

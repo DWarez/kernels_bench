@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import importlib.util
 import json
 import os
@@ -98,11 +99,23 @@ def _load_bench_from_file(path: str) -> Bench:
     return benches[0]
 
 
+def _write_csv(result: BenchResult, path: Path) -> None:
+    header, rows = result.to_csv_rows()
+    with path.open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=header)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
 def _handle_output(result: BenchResult, output: str | None) -> None:
-    """Print results to terminal and optionally write JSON to file."""
+    """Print results to terminal and optionally write to file (JSON or CSV)."""
     print_results(result)
     if output:
-        Path(output).write_text(json.dumps(result.to_dict(), indent=2))
+        path = Path(output)
+        if path.suffix.lower() == ".csv":
+            _write_csv(result, path)
+        else:
+            path.write_text(json.dumps(result.to_dict(), indent=2))
         click.echo(f"\nResults saved to {output}")
 
 
@@ -128,7 +141,7 @@ def main() -> None:
     "--output",
     "-o",
     default=None,
-    help="Write results to a JSON file.",
+    help="Write results to a file. JSON by default, CSV when path ends with .csv.",
 )
 @click.option("--validate", is_flag=True, help="Validate output correctness across kernels.")
 @click.option("--atol", default=1e-3, show_default=True, help="Absolute tolerance for validation.")
@@ -206,7 +219,7 @@ def run(
     "--output",
     "-o",
     default=None,
-    help="Write results to a JSON file.",
+    help="Write results to a file. JSON by default, CSV when path ends with .csv.",
 )
 @click.option("--validate", is_flag=True, help="Validate output correctness across kernels.")
 @click.option("--atol", default=1e-3, show_default=True, help="Absolute tolerance for validation.")

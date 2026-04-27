@@ -114,6 +114,47 @@ class BenchResult:
             candidates = [r for r in candidates if r.params == params]
         return min(candidates, key=lambda r: r.median_ms)
 
+    def to_csv_rows(self) -> tuple[list[str], list[dict[str, Any]]]:
+        """Flatten results into (header, rows) for CSV export.
+
+        Each row is one (kernel_id, params) pair. Param keys vary by run, so we
+        union them across all results to keep the column set stable.
+        """
+        param_keys = sorted({k for kr in self.kernel_results for k in kr.params})
+        header = [
+            "kernel_id",
+            *param_keys,
+            "median_ms",
+            "p10_ms",
+            "p90_ms",
+            "iqr_ms",
+            "has_warnings",
+            "compile_ms",
+            "gflops_per_s",
+            "gb_per_s",
+            "peak_memory_mb",
+            "util_mean",
+            "util_peak",
+        ]
+        rows: list[dict[str, Any]] = []
+        for kr in self.kernel_results:
+            row: dict[str, Any] = {"kernel_id": kr.kernel_id}
+            for k in param_keys:
+                row[k] = kr.params.get(k, "")
+            row["median_ms"] = kr.median_ms
+            row["p10_ms"] = kr.p10_ms
+            row["p90_ms"] = kr.p90_ms
+            row["iqr_ms"] = kr.iqr_ms
+            row["has_warnings"] = kr.has_warnings
+            row["compile_ms"] = kr.compile_ms
+            row["gflops_per_s"] = kr.gflops_per_s
+            row["gb_per_s"] = kr.gb_per_s
+            row["peak_memory_mb"] = kr.metrics.peak_memory_mb
+            row["util_mean"] = kr.metrics.util_mean
+            row["util_peak"] = kr.metrics.util_peak
+            rows.append(row)
+        return header, rows
+
     def to_dict(self) -> dict[str, Any]:
         """Serialize results to a dict suitable for JSON export."""
         return {

@@ -204,6 +204,19 @@ def run(
     is_flag=True,
     help="Run torch.profiler after timing and print the per-op breakdown.",
 )
+@click.option(
+    "--flops",
+    type=int,
+    default=None,
+    help="Number of FLOPs per kernel call, used to compute TFLOP/s.",
+)
+@click.option(
+    "--bytes",
+    "bytes_per_iter",
+    type=int,
+    default=None,
+    help="Bytes moved per kernel call. Defaults to the sum of input+output tensor sizes.",
+)
 def quick(
     kernels: str,
     fn: str,
@@ -216,6 +229,8 @@ def quick(
     rtol: float,
     no_metrics: bool,
     profile: bool,
+    flops: int | None,
+    bytes_per_iter: int | None,
 ) -> None:
     """Benchmark a kernel function directly — no bench file needed.
 
@@ -228,12 +243,15 @@ def quick(
     """
     from kernels import get_kernel
 
+    from kernels_bench.bench import auto_bytes
     from kernels_bench.progress import benchmark_progress, make_on_step
     from kernels_bench.runner import KernelResult, run_benchmark_quick
     from kernels_bench.runtime import detect_runtime
     from kernels_bench.validate import validate_quick
 
     specs = [_parse_arg(a) for a in args]
+    if bytes_per_iter is None:
+        bytes_per_iter = auto_bytes(specs)
     kernel_list = [k.strip() for k in kernels.split(",")]
     runtime = detect_runtime()
 
@@ -282,6 +300,8 @@ def quick(
                     times_ms=times,
                     metrics=metrics,
                     compile_ms=compile_ms,
+                    flops=flops,
+                    bytes_per_iter=bytes_per_iter,
                 )
             )
 

@@ -14,6 +14,26 @@ from kernels_bench.runtime import Runtime, detect_runtime
 from kernels_bench.spec import TensorSpec
 from kernels_bench.validate import validate_bench
 
+# Workload sizing for throughput. Either a static count or a callable that
+# receives the resolved params dict and returns the count for that combo.
+WorkloadSize = int | Callable[[dict[str, int]], int]
+
+
+def _resolve_workload(value: WorkloadSize | None, params: dict[str, int]) -> int | None:
+    if value is None:
+        return None
+    return value(params) if callable(value) else value
+
+
+def auto_bytes(specs: list[TensorSpec]) -> int:
+    """Sum tensor bytes across specs.
+
+    Used as the default for `bytes_per_iter` when the user doesn't supply one:
+    a kernel that reads every input and writes every output once moves at
+    least this many bytes through DRAM. It's a lower-bound estimate, not exact.
+    """
+    return sum(s.nbytes for s in specs)
+
 
 class Bench:
     """Define and run a benchmark comparing HuggingFace Kernels.
@@ -38,11 +58,15 @@ class Bench:
         inputs: list[TensorSpec],
         outputs: list[TensorSpec],
         params: dict[str, list[int]] | None = None,
+        flops: WorkloadSize | None = None,
+        bytes_per_iter: WorkloadSize | None = None,
     ) -> None:
         self.name = name
         self.inputs = inputs
         self.outputs = outputs
         self.params = params or {}
+        self.flops = flops
+        self.bytes_per_iter = bytes_per_iter
         self._fn: Callable[..., Any] | None = None
 
         self._validate()
@@ -182,6 +206,12 @@ class Bench:
                             times_ms=times,
                             metrics=metrics,
                             compile_ms=compile_ms,
+                            flops=_resolve_workload(self.flops, param_set),
+                            bytes_per_iter=(
+                                _resolve_workload(self.bytes_per_iter, param_set)
+                                if self.bytes_per_iter is not None
+                                else auto_bytes(resolved_inputs + resolved_outputs)
+                            ),
                         )
                     )
 

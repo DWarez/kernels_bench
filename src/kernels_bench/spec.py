@@ -60,6 +60,16 @@ class TensorSpec(BaseModel):
         return self
 
     @property
+    def nbytes(self) -> int:
+        """Total bytes for this tensor. Requires fully concrete shape."""
+        if self.symbolic_dims:
+            raise RuntimeError("cannot compute nbytes with unresolved symbolic dims")
+        n = 1
+        for d in self.shape:
+            n *= int(d)
+        return n * torch.tensor([], dtype=self.dtype).element_size()
+
+    @property
     def symbolic_dims(self) -> set[str]:
         """Return the set of symbolic dimension names in this spec."""
         return {d for d in self.shape if isinstance(d, str)}

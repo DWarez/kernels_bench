@@ -4,6 +4,7 @@ from kernels_bench.display import (
     _format_comparison,
     _format_metrics,
     _format_params,
+    _format_throughput,
     _make_bar,
     _pad_right,
     _truncate,
@@ -144,3 +145,33 @@ def test_format_comparison_identical_util():
     fastest = _mk_kr("a", 1.0, util_mean=85.0)
     slower = _mk_kr("b", 1.5, util_mean=85.0)
     assert _format_comparison(slower, fastest) == "1.50x slower  \u00b7  util 85% (fastest: 85%)"
+
+
+def test_format_throughput_none_when_unset():
+    kr = KernelResult(kernel_id="k", params={}, times_ms=[1.0])
+    assert _format_throughput(kr) is None
+
+
+def test_format_throughput_gflops_below_1tflop():
+    # 500 GFLOPs in 1 ms = 500 GFLOP/s
+    kr = KernelResult(kernel_id="k", params={}, times_ms=[1.0], flops=5 * 10**8)
+    out = _format_throughput(kr)
+    assert out == "500.0 GFLOP/s"
+
+
+def test_format_throughput_tflops_scale():
+    # 5e9 FLOPs in 1 ms = 5e12 FLOP/s = 5 TFLOP/s
+    kr = KernelResult(kernel_id="k", params={}, times_ms=[1.0], flops=5 * 10**9)
+    assert _format_throughput(kr) == "5.00 TFLOP/s"
+
+
+def test_format_throughput_combined():
+    # 2e9 flops/ms = 2 TFLOP/s; 8e8 bytes/ms = 800 GB/s.
+    kr = KernelResult(
+        kernel_id="k",
+        params={},
+        times_ms=[1.0],
+        flops=2 * 10**9,
+        bytes_per_iter=8 * 10**8,
+    )
+    assert _format_throughput(kr) == "2.00 TFLOP/s  800.0 GB/s"

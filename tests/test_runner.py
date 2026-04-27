@@ -228,6 +228,41 @@ def test_profile_call_returns_table_string():
     assert "Self" in table
 
 
+def test_kernel_result_throughput():
+    # 1 GFLOP done in 1 ms = 1000 GFLOP/s; 1 GB moved in 1 ms = 1000 GB/s.
+    kr = KernelResult(
+        kernel_id="k",
+        params={},
+        times_ms=[1.0, 1.0, 1.0],
+        flops=10**9,
+        bytes_per_iter=10**9,
+    )
+    assert kr.gflops_per_s == pytest.approx(1000.0)
+    assert kr.gb_per_s == pytest.approx(1000.0)
+
+
+def test_kernel_result_throughput_none_when_unset():
+    kr = KernelResult(kernel_id="k", params={}, times_ms=[1.0])
+    assert kr.gflops_per_s is None
+    assert kr.gb_per_s is None
+
+
+def test_bench_result_to_dict_includes_throughput():
+    kr = KernelResult(
+        kernel_id="k",
+        params={},
+        times_ms=[1.0],
+        flops=2 * 10**9,
+        bytes_per_iter=4 * 10**9,
+    )
+    d = BenchResult(bench_name="b", kernel_results=[kr]).to_dict()
+    row = d["results"][0]
+    assert row["flops"] == 2 * 10**9
+    assert row["bytes_per_iter"] == 4 * 10**9
+    assert row["gflops_per_s"] == pytest.approx(2000.0)
+    assert row["gb_per_s"] == pytest.approx(4000.0)
+
+
 def test_bench_result_to_dict_compile_ms_none_when_missing():
     kr = KernelResult(kernel_id="k", params={}, times_ms=[1.0])
     d = BenchResult(bench_name="b", kernel_results=[kr]).to_dict()

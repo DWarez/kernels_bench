@@ -148,6 +148,22 @@ def _format_comparison(kr: KernelResult, fastest: KernelResult) -> str:
     return base
 
 
+def _format_throughput(kr: KernelResult) -> str | None:
+    """Format compute and bandwidth throughput on one line, or None if neither."""
+    parts: list[str] = []
+    if kr.gflops_per_s is not None:
+        gflops = kr.gflops_per_s
+        if gflops >= 1000:
+            parts.append(f"{gflops / 1000:.2f} TFLOP/s")
+        else:
+            parts.append(f"{gflops:.1f} GFLOP/s")
+    if kr.gb_per_s is not None:
+        parts.append(f"{kr.gb_per_s:.1f} GB/s")
+    if not parts:
+        return None
+    return "  ".join(parts)
+
+
 def _format_metrics(m: RunMetrics) -> str | None:
     """Format RunMetrics as a single short line, or None if nothing to show."""
     parts: list[str] = []
@@ -270,6 +286,11 @@ def print_results(result: BenchResult) -> None:
             if kr.has_warnings:
                 stats += f"{RESET}{COLOR}  {RED}⚠ noisy{RESET}{DIM}"
             _print_row("", f"{DIM}{stats}{RESET}{COLOR}", total_width, label_width)
+
+            # Throughput line (dimmed) — derived from flops/bytes when set.
+            throughput_str = _format_throughput(kr)
+            if throughput_str:
+                _print_row("", f"{DIM}{throughput_str}{RESET}{COLOR}", total_width, label_width)
 
             # Metrics line (dimmed, only if any metric was collected)
             metrics_str = _format_metrics(kr.metrics)

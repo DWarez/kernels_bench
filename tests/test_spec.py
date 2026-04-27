@@ -143,3 +143,14 @@ def test_negative_dim_raises():
 def test_invalid_role_raises():
     with pytest.raises(ValueError, match="role"):
         TensorSpec("x", shape=(1024,), dtype=torch.float16, role="bad")
+
+
+def test_nbytes_concrete():
+    spec = TensorSpec("x", shape=(1024, 1024), dtype=torch.float16)
+    assert spec.nbytes == 1024 * 1024 * 2
+
+
+def test_nbytes_symbolic_raises():
+    spec = TensorSpec("x", shape=("M", 1024), dtype=torch.float16)
+    with pytest.raises(RuntimeError, match="symbolic dims"):
+        _ = spec.nbytes

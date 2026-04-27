@@ -3,7 +3,7 @@
 import pytest
 import torch
 
-from kernels_bench.bench import Bench, _resolve_workload
+from kernels_bench.bench import Bench, _resolve_workload, auto_bytes
 from kernels_bench.spec import TensorSpec
 
 
@@ -107,3 +107,15 @@ def test_bench_stores_workload_callables():
     )
     assert _resolve_workload(bench.flops, {"M": 128}) == 256
     assert _resolve_workload(bench.bytes_per_iter, {"M": 256}) == 512
+
+
+def test_auto_bytes_sums_specs():
+    specs = [
+        TensorSpec("x", shape=(1024,), dtype=torch.float16),  # 2048 B
+        TensorSpec("y", shape=(1024,), dtype=torch.float32, role="output"),  # 4096 B
+    ]
+    assert auto_bytes(specs) == 2048 + 4096
+
+
+def test_auto_bytes_empty():
+    assert auto_bytes([]) == 0

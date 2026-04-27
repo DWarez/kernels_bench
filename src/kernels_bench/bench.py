@@ -25,6 +25,16 @@ def _resolve_workload(value: WorkloadSize | None, params: dict[str, int]) -> int
     return value(params) if callable(value) else value
 
 
+def auto_bytes(specs: list[TensorSpec]) -> int:
+    """Sum tensor bytes across specs.
+
+    Used as the default for `bytes_per_iter` when the user doesn't supply one:
+    a kernel that reads every input and writes every output once moves at
+    least this many bytes through DRAM. It's a lower-bound estimate, not exact.
+    """
+    return sum(s.nbytes for s in specs)
+
+
 class Bench:
     """Define and run a benchmark comparing HuggingFace Kernels.
 
@@ -197,7 +207,11 @@ class Bench:
                             metrics=metrics,
                             compile_ms=compile_ms,
                             flops=_resolve_workload(self.flops, param_set),
-                            bytes_per_iter=_resolve_workload(self.bytes_per_iter, param_set),
+                            bytes_per_iter=(
+                                _resolve_workload(self.bytes_per_iter, param_set)
+                                if self.bytes_per_iter is not None
+                                else auto_bytes(resolved_inputs + resolved_outputs)
+                            ),
                         )
                     )
 

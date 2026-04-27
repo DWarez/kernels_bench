@@ -179,6 +179,54 @@ def _format_metrics(m: RunMetrics) -> str | None:
     return "  ".join(parts)
 
 
+SWEEP_SUMMARY_THRESHOLD = 4
+"""Switch to compact per-kernel summary when there are this many param combos or more."""
+
+
+def _print_sweep_summary(
+    result: BenchResult,
+    total_width: int,
+) -> None:
+    """One row per param combo per kernel — readable at a glance for sweeps.
+
+    Grouped visually by kernel so scaling across the swept dim is easy to spot.
+    Bar width is normalized within each kernel to highlight relative cost.
+    """
+    by_kernel: dict[str, list[KernelResult]] = {}
+    for kr in result.kernel_results:
+        by_kernel.setdefault(kr.kernel_id, []).append(kr)
+
+    # Label column width sized to the longest params string so the bars line up.
+    max_params_len = max(len(_format_params(kr.params)) for kr in result.kernel_results)
+    label_width = max(max_params_len + 1, 12)
+    inner = total_width - 2
+    data_col_width = inner - label_width - 3
+    bar_width = max(data_col_width - 24, 16)  # leave room for "0.000 ms  " + GB/s suffix
+
+    kernels = list(by_kernel.items())
+    for ki, (kernel_id, rows) in enumerate(kernels):
+        _print_divider(total_width, "section")
+        _print_centered(kernel_id, total_width)
+        _print_row_divider(total_width, label_width, "top")
+
+        slowest = max(r.median_ms for r in rows)
+        for i, kr in enumerate(rows):
+            params_str = _format_params(kr.params) or "(no params)"
+            bar = _make_bar(kr.median_ms, slowest, bar_width)
+            median_text = f"{kr.median_ms:.3f} ms"
+            value = f"{median_text}  {bar}"
+            if kr.gb_per_s is not None:
+                value += f"  {DIM}{kr.gb_per_s:.1f} GB/s{RESET}{COLOR}"
+            _print_row(params_str, value, total_width, label_width)
+            if i < len(rows) - 1:
+                _print_row_divider(total_width, label_width)
+
+        # Last kernel uses "bottom" to close the outer box; intermediate
+        # kernels use a section-style divider so the next block flows cleanly.
+        is_last = ki == len(kernels) - 1
+        _print_row_divider(total_width, label_width, "bottom" if is_last else "mid")
+
+
 def print_results(result: BenchResult) -> None:
     """Print benchmark results in hf-mem box-drawing style."""
     kernel_results = result.kernel_results
@@ -253,6 +301,11 @@ def print_results(result: BenchResult) -> None:
                 label_width,
             )
         _print_row_divider(total_width, label_width, "bottom")
+
+    # Compact view for large sweeps — full per-combo blocks become unreadable.
+    if len(param_groups) >= SWEEP_SUMMARY_THRESHOLD:
+        _print_sweep_summary(result, total_width)
+        return
 
     for group_key, group_results in param_groups.items():
         _print_divider(total_width, "section")

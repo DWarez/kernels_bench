@@ -3,7 +3,7 @@
 import pytest
 import torch
 
-from kernels_bench.bench import Bench
+from kernels_bench.bench import Bench, _resolve_workload
 from kernels_bench.spec import TensorSpec
 
 
@@ -81,3 +81,29 @@ def test_bench_run_without_fn_raises():
     )
     with pytest.raises(RuntimeError, match="no benchmark function registered"):
         bench.run(kernels=["fake/kernel"])
+
+
+def test_resolve_workload_static_int():
+    assert _resolve_workload(42, {"M": 1024}) == 42
+
+
+def test_resolve_workload_callable():
+    flops = lambda p: 2 * p["M"] * p["N"]  # noqa: E731
+    assert _resolve_workload(flops, {"M": 16, "N": 32}) == 1024
+
+
+def test_resolve_workload_none():
+    assert _resolve_workload(None, {}) is None
+
+
+def test_bench_stores_workload_callables():
+    bench = Bench(
+        name="t",
+        inputs=[TensorSpec("x", shape=("M",), dtype=torch.float16)],
+        outputs=[],
+        params={"M": [128, 256]},
+        flops=lambda p: 2 * p["M"],
+        bytes_per_iter=lambda p: 2 * p["M"],
+    )
+    assert _resolve_workload(bench.flops, {"M": 128}) == 256
+    assert _resolve_workload(bench.bytes_per_iter, {"M": 256}) == 512

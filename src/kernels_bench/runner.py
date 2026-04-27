@@ -39,6 +39,8 @@ class KernelResult:
     times_ms: list[float]
     metrics: RunMetrics = dataclasses.field(default_factory=RunMetrics)
     compile_ms: float | None = None
+    flops: int | None = None
+    bytes_per_iter: int | None = None
 
     @property
     def mean_ms(self) -> float:
@@ -72,6 +74,20 @@ class KernelResult:
     def iqr_ms(self) -> float:
         """Interquartile range (p75 - p25) — a robust measure of variance."""
         return _quantile(self.times_ms, 0.75) - _quantile(self.times_ms, 0.25)
+
+    @property
+    def gflops_per_s(self) -> float | None:
+        """Compute throughput in GFLOP/s from flops and the median time."""
+        if self.flops is None or self.median_ms <= 0:
+            return None
+        return self.flops / (self.median_ms * 1e-3) / 1e9
+
+    @property
+    def gb_per_s(self) -> float | None:
+        """Memory bandwidth in GB/s from bytes_per_iter and the median time."""
+        if self.bytes_per_iter is None or self.median_ms <= 0:
+            return None
+        return self.bytes_per_iter / (self.median_ms * 1e-3) / 1e9
 
     @property
     def has_warnings(self) -> bool:
@@ -119,6 +135,10 @@ class BenchResult:
                     "has_warnings": kr.has_warnings,
                     "times_ms": kr.times_ms,
                     "compile_ms": kr.compile_ms,
+                    "flops": kr.flops,
+                    "bytes_per_iter": kr.bytes_per_iter,
+                    "gflops_per_s": kr.gflops_per_s,
+                    "gb_per_s": kr.gb_per_s,
                     "metrics": kr.metrics.to_dict(),
                 }
                 for kr in self.kernel_results

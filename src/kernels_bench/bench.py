@@ -25,6 +25,15 @@ def _resolve_workload(value: WorkloadSize | None, params: dict[str, int]) -> int
     return value(params) if callable(value) else value
 
 
+def param_combinations(params: dict[str, list[int]]) -> list[dict[str, int]]:
+    """Cross-product of param value lists into a list of concrete dicts."""
+    if not params:
+        return [{}]
+    keys = sorted(params.keys())
+    values = [params[k] for k in keys]
+    return [dict(zip(keys, combo, strict=True)) for combo in itertools.product(*values)]
+
+
 def auto_bytes(specs: list[TensorSpec]) -> int:
     """Sum tensor bytes across specs.
 
@@ -105,11 +114,7 @@ class Bench:
 
     def _param_combinations(self) -> list[dict[str, int]]:
         """Generate all combinations of param values."""
-        if not self.params:
-            return [{}]
-        keys = sorted(self.params.keys())
-        values = [self.params[k] for k in keys]
-        return [dict(zip(keys, combo, strict=True)) for combo in itertools.product(*values)]
+        return param_combinations(self.params)
 
     def run(
         self,

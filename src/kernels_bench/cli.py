@@ -16,6 +16,7 @@ from kernels_bench.bench import Bench
 from kernels_bench.display import print_results
 from kernels_bench.runner import BenchResult
 from kernels_bench.spec import TensorSpec
+from kernels_bench.validate import ValidationError
 
 DTYPE_MAP: dict[str, torch.dtype] = {
     "float16": torch.float16,
@@ -173,16 +174,19 @@ def run(
     bench = _load_bench_from_file(bench_file)
     kernel_list = [k.strip() for k in kernels.split(",")]
 
-    result = bench.run(
-        kernels=kernel_list,
-        warmup=warmup,
-        iterations=iterations,
-        validate=validate,
-        atol=atol,
-        rtol=rtol,
-        collect_metrics=not no_metrics,
-        profile=profile,
-    )
+    try:
+        result = bench.run(
+            kernels=kernel_list,
+            warmup=warmup,
+            iterations=iterations,
+            validate=validate,
+            atol=atol,
+            rtol=rtol,
+            collect_metrics=not no_metrics,
+            profile=profile,
+        )
+    except ValidationError as e:
+        raise click.ClickException(str(e)) from e
     _handle_output(result, output)
 
 
@@ -321,14 +325,17 @@ def quick(
     # Validation: resolve specs against the first combo (consistent with Bench file mode).
     validation = None
     if validate and len(loaded_kernels) > 1:
-        validation = validate_quick(
-            kernels=loaded_kernels,
-            fn_name=fn,
-            specs=_resolve_specs(specs, combos[0]),
-            runtime=runtime,
-            atol=atol,
-            rtol=rtol,
-        )
+        try:
+            validation = validate_quick(
+                kernels=loaded_kernels,
+                fn_name=fn,
+                specs=_resolve_specs(specs, combos[0]),
+                runtime=runtime,
+                atol=atol,
+                rtol=rtol,
+            )
+        except ValidationError as e:
+            raise click.ClickException(str(e)) from e
 
     all_results: list[KernelResult] = []
     with benchmark_progress() as progress:

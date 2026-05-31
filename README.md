@@ -53,6 +53,8 @@ kernels-bench quick \
 
 The `--validate` flag runs each kernel once on the same input data and checks that outputs match across kernels (using `torch.allclose`). Tolerance is configurable with `--atol` and `--rtol`. Outputs are taken from any `:output` args you declare, or — for functional kernels like `flash_attn_func` that return their result — from the return value. If a kernel produces neither (e.g. it mutates an input in place), validation errors out rather than reporting a hollow pass over zero elements.
 
+Each kernel id may be suffixed with `@revision` (a branch, tag, or commit SHA) — e.g. `-k org/act,org/act@dev` — to pin or compare specific revisions of the same repo, handy for catching regressions before publishing.
+
 ### Heavier workloads
 
 Any kernel on the Hub works — here's Flash Attention 2 with sequence length 8k:

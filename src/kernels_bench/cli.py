@@ -132,7 +132,10 @@ def main() -> None:
     "--kernels",
     "-k",
     required=True,
-    help="Comma-separated list of HuggingFace kernel repo IDs.",
+    help=(
+        "Comma-separated kernel repo IDs, each optionally @revision "
+        "(branch/tag/commit), e.g. org/act,org/act@dev."
+    ),
 )
 @click.option("--warmup", "-w", default=10, show_default=True, help="Number of warmup iterations.")
 @click.option(
@@ -195,7 +198,10 @@ def run(
     "--kernels",
     "-k",
     required=True,
-    help="Comma-separated list of HuggingFace kernel repo IDs.",
+    help=(
+        "Comma-separated kernel repo IDs, each optionally @revision "
+        "(branch/tag/commit), e.g. org/act,org/act@dev."
+    ),
 )
 @click.option(
     "--fn",
@@ -289,7 +295,7 @@ def quick(
     """
     from kernels import get_kernel
 
-    from kernels_bench.bench import auto_bytes, param_combinations
+    from kernels_bench.bench import auto_bytes, param_combinations, split_kernel_ref
     from kernels_bench.progress import benchmark_progress, make_on_step
     from kernels_bench.runner import KernelResult, _resolve_specs, run_benchmark_quick
     from kernels_bench.runtime import detect_runtime
@@ -314,11 +320,13 @@ def quick(
     kernel_list = [k.strip() for k in kernels.split(",")]
     runtime = detect_runtime()
 
-    # Load all kernels upfront
+    # Load all kernels upfront. Each id may carry an @revision suffix; the full
+    # spec stays the result key/label so distinct revisions show up separately.
     loaded_kernels: dict[str, object] = {}
     for kernel_id in kernel_list:
+        repo_id, revision = split_kernel_ref(kernel_id)
         try:
-            loaded_kernels[kernel_id] = get_kernel(kernel_id)
+            loaded_kernels[kernel_id] = get_kernel(repo_id, revision=revision)
         except Exception as e:
             raise click.ClickException(f"failed to load kernel {kernel_id!r}: {e}") from e
 

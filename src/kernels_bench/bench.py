@@ -9,10 +9,16 @@ from typing import Any
 from kernels import get_kernel
 
 from kernels_bench.progress import benchmark_progress, make_on_step
-from kernels_bench.runner import BenchResult, KernelResult, _resolve_specs, run_benchmark
+from kernels_bench.runner import (
+    BenchResult,
+    KernelResult,
+    _resolve_specs,
+    run_benchmark,
+    run_benchmark_ref,
+)
 from kernels_bench.runtime import Runtime, detect_runtime
 from kernels_bench.spec import TensorSpec
-from kernels_bench.validate import validate_bench
+from kernels_bench.validate import REFERENCE_LABEL, validate_bench
 
 # Workload sizing for throughput. Either a static count or a callable that
 # receives the resolved params dict and returns the count for that combo.
@@ -89,6 +95,7 @@ class Bench:
         self.flops = flops
         self.bytes_per_iter = bytes_per_iter
         self._fn: Callable[..., Any] | None = None
+        self._ref: Callable[..., Any] | None = None
 
         self._validate()
 
@@ -122,6 +129,18 @@ class Bench:
         where input/output args match the TensorSpec names in order.
         """
         self._fn = func
+        return func
+
+    def ref(self, func: Callable[..., Any]) -> Callable[..., Any]:
+        """Decorator to register a reference implementation (e.g. plain PyTorch).
+
+        Signature: (*inputs) -> output, taking the input tensors in spec order
+        and returning the result (a tensor, or tuple of tensors). It serves as a
+        correctness oracle for ``validate=True`` — every kernel is checked
+        against it, not just against each other — and as a speed baseline shown
+        in the results table.
+        """
+        self._ref = func
         return func
 
     def _param_combinations(self) -> list[dict[str, int]]:
@@ -170,9 +189,11 @@ class Bench:
             except Exception as e:
                 raise RuntimeError(f"failed to load kernel {kernel_id!r}: {e}") from e
 
-        # Validation (uses first param combo if there are symbolic dims)
+        # Validation (uses first param combo if there are symbolic dims). A
+        # reference lets us validate even a single kernel (kernel vs reference);
+        # without one we need at least two kernels to compare pairwise.
         validation = None
-        if validate and len(loaded_kernels) > 1:
+        if validate and (len(loaded_kernels) > 1 or self._ref is not None):
             param_combos = self._param_combinations()
             first_params = param_combos[0] if param_combos else {}
             resolved_inputs = _resolve_specs(self.inputs, first_params)
@@ -185,12 +206,54 @@ class Bench:
                 runtime=runtime,
                 atol=atol,
                 rtol=rtol,
+                ref=self._ref,
             )
 
         param_combos = self._param_combinations()
         all_results: list[KernelResult] = []
 
         with benchmark_progress() as progress:
+            # Reference baseline (if registered): one timed row per param combo,
+            # so the table shows what each kernel is being compared against.
+            if self._ref is not None:
+                for param_set in param_combos:
+                    params_str = ", ".join(f"{k}={v}" for k, v in sorted(param_set.items()))
+                    label = REFERENCE_LABEL + (f" ({params_str})" if params_str else "")
+
+                    warmup_tid = progress.add_task(f"{label} warmup", total=warmup)
+                    bench_tid = progress.add_task(f"{label} bench", total=iterations)
+                    on_step = make_on_step(progress, warmup_tid, bench_tid)
+
+                    resolved_inputs = _resolve_specs(self.inputs, param_set)
+                    resolved_outputs = _resolve_specs(self.outputs, param_set)
+
+                    times, metrics, compile_ms = run_benchmark_ref(
+                        ref_fn=self._ref,
+                        input_specs=resolved_inputs,
+                        warmup=warmup,
+                        iterations=iterations,
+                        runtime=runtime,
+                        on_step=on_step,
+                        collect_metrics=collect_metrics,
+                    )
+
+                    all_results.append(
+                        KernelResult(
+                            kernel_id=REFERENCE_LABEL,
+                            params=param_set,
+                            times_ms=times,
+                            metrics=metrics,
+                            compile_ms=compile_ms,
+                            flops=_resolve_workload(self.flops, param_set),
+                            bytes_per_iter=(
+                                _resolve_workload(self.bytes_per_iter, param_set)
+                                if self.bytes_per_iter is not None
+                                else auto_bytes(resolved_inputs + resolved_outputs)
+                            ),
+                            is_reference=True,
+                        )
+                    )
+
             for kernel_id, kernel in loaded_kernels.items():
                 for param_set in param_combos:
                     params_str = ", ".join(f"{k}={v}" for k, v in sorted(param_set.items()))

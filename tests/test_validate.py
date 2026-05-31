@@ -5,6 +5,7 @@ import torch
 
 from kernels_bench.spec import TensorSpec
 from kernels_bench.validate import (
+    REFERENCE_LABEL,
     ValidationError,
     _compare_tensors,
     validate_bench,
@@ -219,3 +220,58 @@ def test_validate_quick_three_kernels(runtime, device):
     assert not report.comparisons[1].passed
     # correct-b vs wrong should fail
     assert not report.comparisons[2].passed
+
+
+def _bench_fn(kernel, x, y):
+    """Buffer-style bench fn: delegates to kernel.my_fn(y, x)."""
+    kernel.my_fn(y, x)
+
+
+@pytest.mark.gpu
+def test_validate_bench_reference_is_oracle(runtime, device):
+    """Two kernels that agree but are both wrong are caught by the reference."""
+
+    def ref(x):
+        return x * 3  # ground truth; both kernels compute x * 2
+
+    input_specs = [
+        TensorSpec("x", shape=(64, 64), dtype=torch.float16, device=device, role="input")
+    ]
+    output_specs = [
+        TensorSpec("y", shape=(64, 64), dtype=torch.float16, device=device, role="output")
+    ]
+    kernels = {"a": FakeKernelCorrect(), "b": FakeKernelAlsoCorrect()}
+    report = validate_bench(_bench_fn, kernels, input_specs, output_specs, runtime, ref=ref)
+
+    # 3 comparisons: reference-vs-a, reference-vs-b, a-vs-b.
+    assert len(report.comparisons) == 3
+    # a and b agree with each other...
+    ab = next(c for c in report.comparisons if {c.kernel_a, c.kernel_b} == {"a", "b"})
+    assert ab.passed
+    # ...but both disagree with the reference, so validation does not pass overall.
+    ref_comps = [c for c in report.comparisons if REFERENCE_LABEL in (c.kernel_a, c.kernel_b)]
+    assert len(ref_comps) == 2
+    assert all(not c.passed for c in ref_comps)
+    assert not report.all_passed
+
+
+@pytest.mark.gpu
+def test_validate_bench_reference_validates_single_kernel(runtime, device):
+    """A single kernel can be validated against the reference (pairwise can't)."""
+
+    def ref(x):
+        return x * 2  # matches the kernel
+
+    input_specs = [
+        TensorSpec("x", shape=(64, 64), dtype=torch.float16, device=device, role="input")
+    ]
+    output_specs = [
+        TensorSpec("y", shape=(64, 64), dtype=torch.float16, device=device, role="output")
+    ]
+    report = validate_bench(
+        _bench_fn, {"a": FakeKernelCorrect()}, input_specs, output_specs, runtime, ref=ref
+    )
+    assert report.all_passed
+    assert len(report.comparisons) == 1
+    assert report.comparisons[0].kernel_a == REFERENCE_LABEL
+    assert report.comparisons[0].total_elements == 64 * 64

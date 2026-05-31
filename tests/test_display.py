@@ -1,10 +1,12 @@
 """Tests for the display module."""
 
 from kernels_bench.display import (
+    _ANSI_RE,
     _format_comparison,
     _format_metrics,
     _format_params,
     _format_throughput,
+    _format_vs_reference,
     _make_bar,
     _pad_right,
     _truncate,
@@ -147,6 +149,18 @@ def test_format_comparison_identical_util():
     assert _format_comparison(slower, fastest) == "1.50x slower  \u00b7  util 85% (fastest: 85%)"
 
 
+def test_format_vs_reference_faster():
+    reference = _mk_kr("reference", 2.0)
+    kr = _mk_kr("k", 1.0)
+    assert _ANSI_RE.sub("", _format_vs_reference(kr, reference)) == "2.00x faster than reference"
+
+
+def test_format_vs_reference_slower():
+    reference = _mk_kr("reference", 1.0)
+    kr = _mk_kr("k", 4.0)
+    assert _ANSI_RE.sub("", _format_vs_reference(kr, reference)) == "4.00x slower than reference"
+
+
 def test_format_throughput_none_when_unset():
     kr = KernelResult(kernel_id="k", params={}, times_ms=[1.0])
     assert _format_throughput(kr) is None
@@ -209,3 +223,16 @@ def test_print_results_keeps_full_blocks_below_threshold(capsys):
     out = capsys.readouterr().out
     assert "PARAMS:" in out
     assert "p10=" in out
+
+
+def test_print_results_shows_reference_speedup(capsys):
+    """A reference row is labeled as the baseline; kernels show speedup vs it."""
+    from kernels_bench.display import print_results
+    from kernels_bench.runner import BenchResult
+
+    reference = KernelResult(kernel_id="reference", params={}, times_ms=[2.0], is_reference=True)
+    kernel = KernelResult(kernel_id="org/k", params={}, times_ms=[1.0])
+    print_results(BenchResult(bench_name="b", kernel_results=[reference, kernel]))
+    out = _ANSI_RE.sub("", capsys.readouterr().out)
+    assert "reference baseline" in out
+    assert "2.00x faster than reference" in out

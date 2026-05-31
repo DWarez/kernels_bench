@@ -10,7 +10,13 @@ import torch
 from kernels_bench.spec import TensorSpec
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from kernels_bench.runtime import Runtime
+
+
+REFERENCE_LABEL = "reference"
+"""Result label / dict key for the reference baseline (e.g. plain PyTorch)."""
 
 
 class ValidationError(ValueError):
@@ -146,6 +152,29 @@ def _collect_outputs_bench(
     return output_tensors
 
 
+def _collect_outputs_ref(
+    ref: Callable[..., Any],
+    input_specs: list[TensorSpec],
+    output_specs: list[TensorSpec],
+    input_tensors: dict[str, torch.Tensor],
+    runtime: Runtime,
+) -> dict[str, torch.Tensor]:
+    """Run the functional reference once and key its outputs to match kernels.
+
+    The reference takes the inputs in spec order and returns its result. When
+    the bench declares output specs, the returned tensors are keyed by those
+    names so they line up with kernels that write into named output buffers;
+    otherwise they fall back to ``return``/``return_N`` keys (matching a
+    functional bench fn).
+    """
+    ret = ref(*(input_tensors[s.name] for s in input_specs))
+    runtime.synchronize()
+    tensors = _tensors_from_return(ret)
+    if output_specs and len(tensors) == len(output_specs):
+        return {spec.name: t for spec, t in zip(output_specs, tensors, strict=True)}
+    return _named_return_tensors(ret)
+
+
 def _compare_tensors(
     a: torch.Tensor,
     b: torch.Tensor,
@@ -253,15 +282,31 @@ def validate_bench(
     runtime: Runtime,
     atol: float = 1e-3,
     rtol: float = 1e-3,
+    ref: Callable[..., Any] | None = None,
+    ref_label: str = REFERENCE_LABEL,
 ) -> ValidationReport:
-    """Validate that all kernels produce the same outputs for the run command."""
+    """Validate that all kernels produce the same outputs for the run command.
+
+    When ``ref`` (a functional ``(*inputs) -> output`` callable) is given, it is
+    included as the first participant, so every kernel is compared against it —
+    a ground-truth oracle, not just pairwise agreement. This also makes a single
+    kernel validatable (kernel vs reference), which pairwise alone can't do.
+    """
     # Allocate shared input tensors once
     input_tensors: dict[str, torch.Tensor] = {}
     for spec in input_specs:
         input_tensors[spec.name] = spec.allocate_input(runtime.device)
 
-    # Collect outputs for each kernel
+    # Collect outputs, reference first so comparisons read as reference-vs-kernel.
     kernel_outputs: dict[str, dict[str, torch.Tensor]] = {}
+    if ref is not None:
+        ref_outputs = _collect_outputs_ref(ref, input_specs, output_specs, input_tensors, runtime)
+        if not ref_outputs:
+            raise ValidationError(
+                f"cannot validate against {ref_label!r}: the reference produced no output "
+                "tensors. Make it return its result."
+            )
+        kernel_outputs[ref_label] = ref_outputs
     for kernel_id, kernel in kernels.items():
         outputs = _collect_outputs_bench(
             bench_fn, kernel, input_specs, output_specs, input_tensors, runtime
@@ -274,8 +319,8 @@ def validate_bench(
             )
         kernel_outputs[kernel_id] = outputs
 
-    # Pairwise comparison
-    kernel_ids = list(kernels.keys())
+    # Pairwise comparison (includes the reference when present)
+    kernel_ids = list(kernel_outputs.keys())
     comparisons: list[ValidationResult] = []
 
     for i in range(len(kernel_ids)):

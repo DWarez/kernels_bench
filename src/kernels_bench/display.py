@@ -148,6 +148,20 @@ def _format_comparison(kr: KernelResult, fastest: KernelResult) -> str:
     return base
 
 
+def _format_vs_reference(kr: KernelResult, reference: KernelResult) -> str:
+    """Format a kernel's speedup relative to the reference baseline.
+
+    Green when the kernel beats the reference, red when it's slower \u2014 the
+    "is it worth it vs PyTorch?" answer at a glance.
+    """
+    if kr.median_ms <= 0 or reference.median_ms <= 0:
+        return f"{DIM}vs reference: n/a{RESET}{COLOR}"
+    ratio = reference.median_ms / kr.median_ms
+    if ratio >= 1.0:
+        return f"{GREEN}{ratio:.2f}x faster than reference{RESET}{COLOR}"
+    return f"{RED}{1.0 / ratio:.2f}x slower than reference{RESET}{COLOR}"
+
+
 def _format_throughput(kr: KernelResult) -> str | None:
     """Format compute and bandwidth throughput on one line, or None if neither."""
     parts: list[str] = []
@@ -313,11 +327,14 @@ def print_results(result: BenchResult) -> None:
             _print_centered(f"PARAMS: {group_key}", total_width)
         _print_row_divider(total_width, label_width, "top")
 
-        fastest = min(group_results, key=lambda r: r.median_ms)
+        reference = next((r for r in group_results if r.is_reference), None)
+        non_ref = [r for r in group_results if not r.is_reference]
+        # "Fastest" is the fastest kernel; the reference is a baseline, not a contender.
+        fastest = min(non_ref, key=lambda r: r.median_ms) if non_ref else group_results[0]
         slowest_median = max(r.median_ms for r in group_results)
 
         for i, kr in enumerate(group_results):
-            is_fastest = kr is fastest and len(group_results) > 1
+            is_fastest = kr is fastest and len(non_ref) > 1
             kernel_label = _truncate(kr.kernel_id, label_width)
             bar = _make_bar(kr.median_ms, slowest_median, bar_width)
 
@@ -359,8 +376,15 @@ def print_results(result: BenchResult) -> None:
                     label_width,
                 )
 
-            # Comparison line
-            if is_fastest:
+            # Comparison line. With a reference present, every kernel is shown
+            # relative to it ("is it worth it?"); the fastest kernel is still
+            # marked by its bolded median above. Without one, fall back to the
+            # kernel-vs-fastest comparison.
+            if kr.is_reference:
+                _print_row("", f"{DIM}reference baseline{RESET}{COLOR}", total_width, label_width)
+            elif reference is not None:
+                _print_row("", _format_vs_reference(kr, reference), total_width, label_width)
+            elif is_fastest:
                 _print_row("", f"{GREEN}FASTEST{RESET}{COLOR}", total_width, label_width)
             elif len(group_results) > 1:
                 _print_row("", _format_comparison(kr, fastest), total_width, label_width)

@@ -42,6 +42,8 @@ class KernelResult:
     compile_ms: float | None = None
     flops: int | None = None
     bytes_per_iter: int | None = None
+    is_reference: bool = False
+    """True for a baseline reference row (e.g. plain PyTorch), not a Hub kernel."""
 
     @property
     def mean_ms(self) -> float:
@@ -109,8 +111,12 @@ class BenchResult:
     validation: ValidationReport | None = None
 
     def fastest(self, params: dict[str, int] | None = None) -> KernelResult:
-        """Return the fastest kernel result, optionally filtered by params."""
-        candidates = self.kernel_results
+        """Return the fastest kernel result, optionally filtered by params.
+
+        Reference baselines are excluded — "fastest" means the fastest kernel,
+        not the PyTorch reference we're measuring kernels against.
+        """
+        candidates = [r for r in self.kernel_results if not r.is_reference]
         if params is not None:
             candidates = [r for r in candidates if r.params == params]
         return min(candidates, key=lambda r: r.median_ms)
@@ -181,6 +187,7 @@ class BenchResult:
                     "bytes_per_iter": kr.bytes_per_iter,
                     "gflops_per_s": kr.gflops_per_s,
                     "gb_per_s": kr.gb_per_s,
+                    "is_reference": kr.is_reference,
                     "metrics": kr.metrics.to_dict(),
                 }
                 for kr in self.kernel_results
@@ -398,3 +405,22 @@ def run_benchmark_quick(
         print(f"\nPROFILE TRACE: {profile_label or fn_name}")
         print(profile_call(fn, tensors, label=profile_label or fn_name))
     return result
+
+
+def run_benchmark_ref(
+    ref_fn: Callable[..., Any],
+    input_specs: list[TensorSpec],
+    warmup: int,
+    iterations: int,
+    runtime: Runtime,
+    on_step: ProgressCallback = None,
+    collect_metrics: bool = True,
+) -> tuple[list[float], RunMetrics, float]:
+    """Time a functional reference: ``ref(*inputs) -> output``.
+
+    Unlike a kernel bench fn, the reference takes only the input tensors — no
+    kernel handle, no output buffers — and returns its result, so it can be a
+    plain PyTorch implementation used as a speed and correctness baseline.
+    """
+    tensors = [spec.allocate_input(runtime.device) for spec in input_specs]
+    return _timed_loop(ref_fn, tensors, warmup, iterations, runtime, on_step, collect_metrics)

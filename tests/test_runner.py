@@ -14,6 +14,7 @@ from kernels_bench.runner import (
     profile_call,
     run_benchmark,
     run_benchmark_quick,
+    run_benchmark_ref,
 )
 from kernels_bench.runtime import RunMetrics, Runtime
 from kernels_bench.spec import TensorSpec
@@ -103,6 +104,37 @@ def test_timed_loop_with_callback(runtime, device):
     # Bench still emits exactly `iterations` samples.
     assert len(bench_steps) == 5
     assert bench_steps[-1] == ("bench", 5, 5)
+
+
+def test_run_benchmark_ref_times_reference():
+    """run_benchmark_ref times a functional ref(*inputs) — no GPU needed."""
+    rt = _FakeRuntime(per_call_s=1e-4)
+    specs = [TensorSpec("x", shape=(8, 8), dtype=torch.float32, device="cpu")]
+
+    def ref(x):
+        return x * 2
+
+    times, _metrics, _compile = run_benchmark_ref(
+        ref, specs, warmup=2, iterations=5, runtime=rt, collect_metrics=False
+    )
+    assert len(times) == 5
+
+
+def test_fastest_excludes_reference():
+    kref = KernelResult(kernel_id="reference", params={}, times_ms=[0.5], is_reference=True)
+    kfast = KernelResult(kernel_id="a", params={}, times_ms=[1.0])
+    kslow = KernelResult(kernel_id="b", params={}, times_ms=[2.0])
+    result = BenchResult(bench_name="x", kernel_results=[kref, kfast, kslow])
+    # The reference is fastest by time, but fastest() returns the fastest kernel.
+    assert result.fastest().kernel_id == "a"
+
+
+def test_to_dict_includes_is_reference():
+    kr = KernelResult(kernel_id="reference", params={}, times_ms=[1.0], is_reference=True)
+    other = KernelResult(kernel_id="a", params={}, times_ms=[1.0])
+    d = BenchResult(bench_name="b", kernel_results=[kr, other]).to_dict()
+    assert d["results"][0]["is_reference"] is True
+    assert d["results"][1]["is_reference"] is False
 
 
 def test_batch_for_sizes_to_target():

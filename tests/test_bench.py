@@ -151,3 +151,17 @@ def test_split_kernel_ref_with_revision():
 def test_split_kernel_ref_empty_revision():
     # A trailing '@' means "no revision", not an empty ref.
     assert split_kernel_ref("org/repo@") == ("org/repo", None)
+
+
+def test_bench_ref_decorator():
+    bench = Bench(
+        name="t",
+        inputs=[TensorSpec("x", shape=(8,), dtype=torch.float16)],
+        outputs=[],
+    )
+
+    @bench.ref
+    def reference(x):
+        return x * 2
+
+    assert bench._ref is reference

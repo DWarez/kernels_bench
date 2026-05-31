@@ -119,11 +119,17 @@ bench = Bench(
 def forward(kernel, x, y):
     kernel.gelu_fast(y, x)
 
+# Optional PyTorch reference: a speed baseline in the table, and a correctness
+# oracle under validate=True. Takes the inputs, returns the result.
+@bench.ref
+def reference(x):
+    return torch.nn.functional.gelu(x, approximate="tanh")
+
 result = bench.run(
     kernels=["kernels-community/activation"],
     warmup=10,
     iterations=100,
-    validate=True,  # check correctness when comparing multiple kernels
+    validate=True,  # check kernels against each other and the reference
 )
 
 print_results(result)
@@ -136,6 +142,8 @@ for kr in result.kernel_results:
 import json
 json.dump(result.to_dict(), open("results.json", "w"), indent=2)
 ```
+
+Registering a reference with `@bench.ref` adds a PyTorch baseline row (so you can see whether a kernel is actually faster than eager torch) and, under `validate=True`, checks every kernel against it as ground truth — catching bugs that pairwise kernel-vs-kernel comparison can't, like two kernels that are wrong in the same way. With a reference, even a single kernel can be validated. It's defined in Python, so it's available via a bench file (`kernels-bench run`) or the library — not the flat-argument `quick` command.
 
 ## Output
 

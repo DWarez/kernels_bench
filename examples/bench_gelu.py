@@ -28,3 +28,10 @@ bench = Bench(
 @bench.fn
 def forward(kernel, x, y):
     kernel.gelu_fast(y, x)
+
+
+# Optional reference: plain PyTorch, used as a speed baseline in the table and
+# (with --validate) as a correctness oracle. Takes the inputs, returns the result.
+@bench.ref
+def reference(x):
+    return torch.nn.functional.gelu(x, approximate="tanh")

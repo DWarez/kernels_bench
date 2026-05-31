@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import dataclasses
+import time
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from typing import Any
 
 from kernels_bench.device import DeviceInfo
@@ -87,6 +89,25 @@ class Runtime(ABC):
     @abstractmethod
     def synchronize(self) -> None:
         """Block until all pending device operations complete."""
+
+    def time_calls(self, fn: Callable[..., Any], args: list[Any], n: int) -> float:
+        """Return elapsed seconds for `n` back-to-back ``fn(*args)`` calls.
+
+        The default implementation uses a synchronized host clock: it
+        synchronizes, enqueues all `n` calls, synchronizes again, and returns
+        the wall time. This includes Python launch overhead in the measurement.
+
+        Subclasses backed by a device timer (CUDA/MPS events) override this to
+        measure pure *device* time, which excludes the host-side cost of
+        enqueuing each launch — essential for fast kernels whose runtime is
+        smaller than the launch overhead.
+        """
+        self.synchronize()
+        start = time.perf_counter()
+        for _ in range(n):
+            fn(*args)
+        self.synchronize()
+        return time.perf_counter() - start
 
     @abstractmethod
     def get_device_info(self) -> DeviceInfo:

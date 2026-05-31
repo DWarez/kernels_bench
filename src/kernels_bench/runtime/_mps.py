@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import contextlib
 import platform
+from collections.abc import Callable
+from typing import Any
 
 import torch
 
@@ -27,6 +29,24 @@ class MPSRuntime(Runtime):
 
     def synchronize(self) -> None:
         torch.mps.synchronize()
+
+    def time_calls(self, fn: Callable[..., Any], args: list[Any], n: int) -> float:
+        """Time `n` back-to-back calls with MPS events — pure device time.
+
+        Mirrors the CUDA path. Falls back to the host-clock base implementation
+        if MPS event timing is unavailable on this torch build.
+        """
+        try:
+            start = torch.mps.Event(enable_timing=True)
+            end = torch.mps.Event(enable_timing=True)
+            start.record()
+            for _ in range(n):
+                fn(*args)
+            end.record()
+            torch.mps.synchronize()
+            return start.elapsed_time(end) / 1000.0  # ms -> s
+        except Exception:
+            return super().time_calls(fn, args, n)
 
     def get_device_info(self) -> DeviceInfo:
         if not self.is_available():

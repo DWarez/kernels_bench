@@ -6,6 +6,8 @@ import platform
 import statistics
 import threading
 import time
+from collections.abc import Callable
+from typing import Any
 
 import torch
 
@@ -94,6 +96,24 @@ class CUDARuntime(Runtime):
 
     def synchronize(self) -> None:
         torch.cuda.synchronize()
+
+    def time_calls(self, fn: Callable[..., Any], args: list[Any], n: int) -> float:
+        """Time `n` back-to-back calls with CUDA events — pure device time.
+
+        Events are recorded on the stream around the launch loop, so the
+        measurement is the GPU-timeline duration of the kernels and excludes
+        the host-side enqueue cost. The launches are issued without
+        intervening syncs so the queue stays full and the GPU runs them
+        back-to-back; a single sync at the end bounds the region.
+        """
+        start = torch.cuda.Event(enable_timing=True)
+        end = torch.cuda.Event(enable_timing=True)
+        start.record()
+        for _ in range(n):
+            fn(*args)
+        end.record()
+        torch.cuda.synchronize()
+        return start.elapsed_time(end) / 1000.0  # ms -> s
 
     def create_metrics_collector(self) -> CUDAMetricsCollector:
         return CUDAMetricsCollector()

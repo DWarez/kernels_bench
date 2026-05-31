@@ -101,6 +101,11 @@ class Runtime(ABC):
         measure pure *device* time, which excludes the host-side cost of
         enqueuing each launch — essential for fast kernels whose runtime is
         smaller than the launch overhead.
+
+        Batching `n` calls under a single event pair (in the device-timer
+        overrides) keeps launches pipelined and amortizes the fixed cost of
+        starting/stopping the timer, so the per-call figure isn't inflated by
+        timer overhead — important for kernels only a few µs long.
         """
         self.synchronize()
         start = time.perf_counter()

@@ -3,16 +3,60 @@
 import pytest
 import torch
 
+from kernels_bench import runner
+from kernels_bench.device import DeviceInfo
 from kernels_bench.runner import (
     BenchResult,
     KernelResult,
+    _batch_for,
     _timed_loop,
+    _warmup_and_estimate,
     profile_call,
     run_benchmark,
     run_benchmark_quick,
 )
-from kernels_bench.runtime import RunMetrics
+from kernels_bench.runtime import RunMetrics, Runtime
 from kernels_bench.spec import TensorSpec
+
+
+@pytest.fixture(autouse=True)
+def _fast_warmup(monkeypatch):
+    """Drop the wall-time warmup floor so tests don't each wait MIN_WARMUP_S.
+
+    The floor only governs how long we keep the GPU busy to reach boost clocks;
+    its value doesn't affect what the timing code computes, just how long it
+    spins. Setting it to 0 makes warmup stop at the call floor.
+    """
+    monkeypatch.setattr(runner, "MIN_WARMUP_S", 0.0)
+
+
+class _FakeRuntime(Runtime):
+    """Minimal runtime with a deterministic timer, for non-GPU unit tests."""
+
+    def __init__(self, per_call_s: float) -> None:
+        self.per_call_s = per_call_s
+        self.total_calls = 0
+
+    @property
+    def name(self) -> str:
+        return "fake"
+
+    @property
+    def device(self) -> str:
+        return "cpu"
+
+    def is_available(self) -> bool:
+        return True
+
+    def synchronize(self) -> None:
+        pass
+
+    def get_device_info(self) -> DeviceInfo:
+        raise NotImplementedError
+
+    def time_calls(self, fn, args, n):
+        self.total_calls += n
+        return self.per_call_s * n
 
 
 def _noop(*args):
@@ -33,9 +77,7 @@ class FakeKernel:
 @pytest.mark.gpu
 def test_timed_loop_returns_correct_count(runtime, device):
     x = torch.randn(16, 16, device=device)
-    times, _metrics, compile_ms = _timed_loop(
-        _noop, [x], warmup=2, iterations=10, runtime=runtime
-    )
+    times, _metrics, compile_ms = _timed_loop(_noop, [x], warmup=2, iterations=10, runtime=runtime)
     assert len(times) == 10
     assert all(t >= 0 for t in times)
     assert compile_ms >= 0
@@ -53,10 +95,31 @@ def test_timed_loop_with_callback(runtime, device):
 
     warmup_steps = [s for s in steps if s[0] == "warmup"]
     bench_steps = [s for s in steps if s[0] == "bench"]
-    assert len(warmup_steps) == 3
-    assert len(bench_steps) == 5
+    # Warmup is time-based, so the step count varies; but progress is reported
+    # against the call floor and tops out there.
+    assert warmup_steps, "expected at least one warmup step"
+    assert all(total == 3 and current <= 3 for _, current, total in warmup_steps)
     assert warmup_steps[-1] == ("warmup", 3, 3)
+    # Bench still emits exactly `iterations` samples.
+    assert len(bench_steps) == 5
     assert bench_steps[-1] == ("bench", 5, 5)
+
+
+def test_batch_for_sizes_to_target():
+    # 1 µs/call to span 1 ms -> 1000 calls.
+    assert _batch_for(1e-6, 1e-3) == 1000
+    # Slower than the target block -> floor at a single call.
+    assert _batch_for(5e-3, 1e-3) == 1
+    # Immeasurably fast / nonsensical -> the cap, never zero.
+    assert _batch_for(0.0, 1e-3) == runner._INNER_CAP
+    assert _batch_for(-1.0, 1e-3) == runner._INNER_CAP
+
+
+def test_warmup_and_estimate_runs_min_calls_and_returns_per_call():
+    rt = _FakeRuntime(per_call_s=1e-4)
+    est = _warmup_and_estimate(rt, _noop, [], min_calls=50)
+    assert rt.total_calls >= 50
+    assert est == pytest.approx(1e-4)
 
 
 @pytest.mark.gpu
@@ -140,9 +203,7 @@ def test_kernel_result_single_iteration():
 
 def test_kernel_result_quantiles():
     # Sorted: 1..11 → p10≈1, p50≈6, p90≈10. Nearest-rank quantile.
-    kr = KernelResult(
-        kernel_id="k", params={}, times_ms=[float(i) for i in range(1, 12)]
-    )
+    kr = KernelResult(kernel_id="k", params={}, times_ms=[float(i) for i in range(1, 12)])
     assert kr.p10_ms == 2.0
     assert kr.median_ms == 6.0
     assert kr.p90_ms == 10.0
@@ -157,9 +218,7 @@ def test_kernel_result_has_warnings_noisy():
 
 
 def test_kernel_result_has_warnings_quiet():
-    kr = KernelResult(
-        kernel_id="k", params={}, times_ms=[1.00, 1.01, 1.00, 1.01, 1.00, 1.01]
-    )
+    kr = KernelResult(kernel_id="k", params={}, times_ms=[1.00, 1.01, 1.00, 1.01, 1.00, 1.01])
     assert kr.has_warnings is False
 
 

@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import dataclasses
+import math
 import statistics
+import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 import torch
 from torch.profiler import ProfilerActivity, profile, record_function
-from torch.utils.benchmark import Timer
 
 from kernels_bench.device import DeviceInfo
 from kernels_bench.runtime import RunMetrics
@@ -237,6 +238,57 @@ def profile_call(
     return prof.key_averages().table(sort_by=sort_key, row_limit=row_limit)
 
 
+# GPUs raise their clocks under sustained load, and ramping from idle to boost
+# takes a few hundred ms of continuous work — far more than a fixed warmup
+# *count* delivers for a fast kernel (thousands of calls can finish in under a
+# millisecond). So warmup is wall-time based: we keep running until this much
+# time has elapsed, so measurements reflect steady-state clocks, not idle ones.
+MIN_WARMUP_S = 0.5
+# Work done per warmup batch. Batching keeps the host loop from being the
+# bottleneck while still syncing often enough to track elapsed time.
+_WARMUP_CHUNK_S = 0.02
+# Target device time per measurement sample. Each sample batches enough calls
+# to span this, so the fixed per-sample timer cost stays negligible.
+_MEASURE_BLOCK_S = 1e-3
+_INNER_CAP = 10000
+
+
+def _batch_for(per_call: float, target_s: float) -> int:
+    """How many calls span ~`target_s` at `per_call` seconds each (>=1, capped)."""
+    if per_call <= 0:
+        return _INNER_CAP
+    return max(1, min(_INNER_CAP, round(target_s / per_call)))
+
+
+def _warmup_and_estimate(
+    runtime: Runtime,
+    fn: Callable[..., Any],
+    args: list[Any],
+    min_calls: int,
+    on_step: ProgressCallback = None,
+) -> float:
+    """Warm up for at least `min_calls` calls and `MIN_WARMUP_S`; return per-call (s).
+
+    The wall-time floor is what ramps the GPU to boost clocks. Each batch is
+    sized to span ~`_WARMUP_CHUNK_S` so the host loop isn't the bottleneck, and
+    the final batch's per-call time — measured at steady-state clocks — is
+    returned so the measurement batch size is derived from a boosted figure
+    rather than a cold, inflated one.
+    """
+    start = time.perf_counter()
+    calls = 0
+    n = 1
+    per_call = math.inf
+    while True:
+        per_call = runtime.time_calls(fn, args, n) / n
+        calls += n
+        if on_step:
+            on_step("warmup", min(calls, min_calls), min_calls)
+        if calls >= min_calls and (time.perf_counter() - start) >= MIN_WARMUP_S:
+            return per_call
+        n = _batch_for(per_call, _WARMUP_CHUNK_S)
+
+
 def _timed_loop(
     fn: Callable[..., Any],
     args: list[Any],
@@ -246,47 +298,51 @@ def _timed_loop(
     on_step: ProgressCallback = None,
     collect_metrics: bool = True,
 ) -> tuple[list[float], RunMetrics, float]:
-    """Run compile + warmup + timed iterations.
+    """Run compile + warmup + timed iterations using device-side timing.
 
     Returns (per-iter times in ms, metrics, compile_ms). The first call is
     timed separately as compile_ms so JIT/autotune cost is visible instead of
     being absorbed (or not) by the warmup window.
 
-    Uses torch.utils.benchmark.Timer for every measurement: it handles CUDA
-    synchronization, autograd state and stream context for us.
+    Timing goes through ``runtime.time_calls`` (CUDA/MPS events when available),
+    so a measurement reflects kernel *device* time rather than the Python cost
+    of launching it — the latter dwarfs fast kernels and made bandwidth/FLOP
+    numbers read far below reality. Each of the `iterations` samples batches
+    enough back-to-back calls to span ``_MEASURE_BLOCK_S`` and reports the
+    per-call average, so the fixed timer cost is amortized away.
+
+    Warmup is adaptive (see `_warmup_and_estimate`): it runs until the per-call
+    time plateaus, so the GPU is at boost clocks before we measure — otherwise a
+    fast kernel reads several times slower than its steady-state.
 
     When collect_metrics is False, the runtime's real collector is replaced with
     a no-op — peak_memory / util fields come back as None.
     """
-    # We inject runtime.synchronize() into the stmt so each measurement bounds
-    # the device queue. torch.utils.benchmark.Timer already synchronizes for
-    # CUDA, but not for MPS — adding our own sync makes the timing path uniform.
-    timer = Timer(
-        stmt="fn(*args); sync()",
-        globals={"fn": fn, "args": args, "sync": runtime.synchronize},
-    )
+    with torch.no_grad():
+        # First call pays JIT/autotune/allocation cost — keep it out of the
+        # steady-state distribution and report it separately.
+        compile_ms = runtime.time_calls(fn, args, 1) * 1000.0
 
-    compile_m = timer.timeit(1)
-    compile_ms = compile_m.mean * 1000.0
+        est_s = _warmup_and_estimate(runtime, fn, args, warmup, on_step)
 
-    for i in range(warmup):
-        timer.timeit(1)
-        if on_step:
-            on_step("warmup", i + 1, warmup)
-    runtime.synchronize()
+        # Size each sample's batch from the warmed estimate so one sample spans
+        # ~_MEASURE_BLOCK_S; clamp so we always run at least one call.
+        inner = _batch_for(est_s, _MEASURE_BLOCK_S)
 
-    collector = runtime.create_metrics_collector() if collect_metrics else _NoopMetricsCollector()
-    collector.start()
+        collector = (
+            runtime.create_metrics_collector() if collect_metrics else _NoopMetricsCollector()
+        )
+        collector.start()
 
-    times: list[float] = []
-    try:
-        for i in range(iterations):
-            m = timer.timeit(1)
-            times.append(m.mean * 1000.0)
-            if on_step:
-                on_step("bench", i + 1, iterations)
-    finally:
-        collector.stop()
+        times: list[float] = []
+        try:
+            for i in range(iterations):
+                block_s = runtime.time_calls(fn, args, inner)
+                times.append(block_s / inner * 1000.0)
+                if on_step:
+                    on_step("bench", i + 1, iterations)
+        finally:
+            collector.stop()
 
     return times, collector.result(), compile_ms
 

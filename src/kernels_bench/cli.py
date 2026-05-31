@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import importlib.util
 import json
 import os
@@ -45,7 +46,11 @@ def _parse_arg(arg: str) -> TensorSpec:
         )
 
     name = parts[0]
-    shape = tuple(int(d) for d in parts[1].split(","))
+    # Each dim is either a literal int or a symbolic identifier (e.g. "M") that
+    # gets resolved per param combo when --sweep is used.
+    shape: tuple[int | str, ...] = tuple(
+        int(d) if d.lstrip("-").isdigit() else d for d in parts[1].split(",")
+    )
     dtype = DTYPE_MAP.get(parts[2], torch.float16) if len(parts) > 2 else torch.float16
     role = parts[3] if len(parts) > 3 else "input"
 
@@ -57,6 +62,20 @@ def _parse_arg(arg: str) -> TensorSpec:
         raise click.ClickException(f"role must be 'input' or 'output', got {role!r}")
 
     return TensorSpec(name, shape=shape, dtype=dtype, role=role)
+
+
+def _parse_sweep(s: str) -> tuple[str, list[int]]:
+    """Parse a --sweep spec like 'M=512,1024,2048' into ('M', [512, 1024, 2048])."""
+    if "=" not in s:
+        raise click.ClickException(f"invalid --sweep {s!r}, expected KEY=v1,v2,...")
+    key, values = s.split("=", 1)
+    key = key.strip()
+    if not key.isidentifier():
+        raise click.ClickException(f"sweep key {key!r} must be a valid identifier")
+    try:
+        return key, [int(v) for v in values.split(",")]
+    except ValueError as e:
+        raise click.ClickException(f"sweep values for {key!r} must be ints: {e}") from e
 
 
 def _load_bench_from_file(path: str) -> Bench:
@@ -80,11 +99,23 @@ def _load_bench_from_file(path: str) -> Bench:
     return benches[0]
 
 
+def _write_csv(result: BenchResult, path: Path) -> None:
+    header, rows = result.to_csv_rows()
+    with path.open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=header)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
 def _handle_output(result: BenchResult, output: str | None) -> None:
-    """Print results to terminal and optionally write JSON to file."""
+    """Print results to terminal and optionally write to file (JSON or CSV)."""
     print_results(result)
     if output:
-        Path(output).write_text(json.dumps(result.to_dict(), indent=2))
+        path = Path(output)
+        if path.suffix.lower() == ".csv":
+            _write_csv(result, path)
+        else:
+            path.write_text(json.dumps(result.to_dict(), indent=2))
         click.echo(f"\nResults saved to {output}")
 
 
@@ -110,7 +141,7 @@ def main() -> None:
     "--output",
     "-o",
     default=None,
-    help="Write results to a JSON file.",
+    help="Write results to a file. JSON by default, CSV when path ends with .csv.",
 )
 @click.option("--validate", is_flag=True, help="Validate output correctness across kernels.")
 @click.option("--atol", default=1e-3, show_default=True, help="Absolute tolerance for validation.")
@@ -188,7 +219,7 @@ def run(
     "--output",
     "-o",
     default=None,
-    help="Write results to a JSON file.",
+    help="Write results to a file. JSON by default, CSV when path ends with .csv.",
 )
 @click.option("--validate", is_flag=True, help="Validate output correctness across kernels.")
 @click.option("--atol", default=1e-3, show_default=True, help="Absolute tolerance for validation.")
@@ -217,6 +248,16 @@ def run(
     default=None,
     help="Bytes moved per kernel call. Defaults to the sum of input+output tensor sizes.",
 )
+@click.option(
+    "--sweep",
+    "sweeps",
+    multiple=True,
+    help=(
+        "Sweep a symbolic dim across values, e.g. --sweep M=512,1024,2048. "
+        "Repeat for a multi-dim grid. Use symbolic names in --arg shapes "
+        "(e.g. x:M,M:float16:input) to bind them."
+    ),
+)
 def quick(
     kernels: str,
     fn: str,
@@ -231,6 +272,7 @@ def quick(
     profile: bool,
     flops: int | None,
     bytes_per_iter: int | None,
+    sweeps: tuple[str, ...],
 ) -> None:
     """Benchmark a kernel function directly — no bench file needed.
 
@@ -243,15 +285,28 @@ def quick(
     """
     from kernels import get_kernel
 
-    from kernels_bench.bench import auto_bytes
+    from kernels_bench.bench import auto_bytes, param_combinations
     from kernels_bench.progress import benchmark_progress, make_on_step
-    from kernels_bench.runner import KernelResult, run_benchmark_quick
+    from kernels_bench.runner import KernelResult, _resolve_specs, run_benchmark_quick
     from kernels_bench.runtime import detect_runtime
     from kernels_bench.validate import validate_quick
 
     specs = [_parse_arg(a) for a in args]
-    if bytes_per_iter is None:
-        bytes_per_iter = auto_bytes(specs)
+    sweep_dict: dict[str, list[int]] = dict(_parse_sweep(s) for s in sweeps)
+
+    # Sanity-check sweep keys vs. symbolic dims used in --arg.
+    required = set().union(*(s.symbolic_dims for s in specs)) if specs else set()
+    provided = set(sweep_dict.keys())
+    missing = required - provided
+    if missing:
+        raise click.ClickException(
+            f"symbolic dims {sorted(missing)} appear in --arg but no --sweep was given for them"
+        )
+    unused = provided - required
+    if unused:
+        raise click.ClickException(f"--sweep keys {sorted(unused)} are not used in any --arg shape")
+
+    combos = param_combinations(sweep_dict)
     kernel_list = [k.strip() for k in kernels.split(",")]
     runtime = detect_runtime()
 
@@ -263,13 +318,13 @@ def quick(
         except Exception as e:
             raise click.ClickException(f"failed to load kernel {kernel_id!r}: {e}") from e
 
-    # Validation
+    # Validation: resolve specs against the first combo (consistent with Bench file mode).
     validation = None
     if validate and len(loaded_kernels) > 1:
         validation = validate_quick(
             kernels=loaded_kernels,
             fn_name=fn,
-            specs=specs,
+            specs=_resolve_specs(specs, combos[0]),
             runtime=runtime,
             atol=atol,
             rtol=rtol,
@@ -278,32 +333,39 @@ def quick(
     all_results: list[KernelResult] = []
     with benchmark_progress() as progress:
         for kernel_id, kernel in loaded_kernels.items():
-            warmup_tid = progress.add_task(f"{kernel_id} warmup", total=warmup)
-            bench_tid = progress.add_task(f"{kernel_id} bench", total=iterations)
-            on_step = make_on_step(progress, warmup_tid, bench_tid)
-            times, metrics, compile_ms = run_benchmark_quick(
-                kernel=kernel,
-                fn_name=fn,
-                specs=specs,
-                warmup=warmup,
-                iterations=iterations,
-                runtime=runtime,
-                on_step=on_step,
-                collect_metrics=not no_metrics,
-                profile=profile,
-                profile_label=kernel_id,
-            )
-            all_results.append(
-                KernelResult(
-                    kernel_id=kernel_id,
-                    params={},
-                    times_ms=times,
-                    metrics=metrics,
-                    compile_ms=compile_ms,
-                    flops=flops,
-                    bytes_per_iter=bytes_per_iter,
+            for params in combos:
+                resolved = _resolve_specs(specs, params)
+                params_str = ", ".join(f"{k}={v}" for k, v in sorted(params.items()))
+                label = f"{kernel_id}" + (f" ({params_str})" if params_str else "")
+
+                warmup_tid = progress.add_task(f"{label} warmup", total=warmup)
+                bench_tid = progress.add_task(f"{label} bench", total=iterations)
+                on_step = make_on_step(progress, warmup_tid, bench_tid)
+                times, metrics, compile_ms = run_benchmark_quick(
+                    kernel=kernel,
+                    fn_name=fn,
+                    specs=resolved,
+                    warmup=warmup,
+                    iterations=iterations,
+                    runtime=runtime,
+                    on_step=on_step,
+                    collect_metrics=not no_metrics,
+                    profile=profile,
+                    profile_label=label,
                 )
-            )
+                all_results.append(
+                    KernelResult(
+                        kernel_id=kernel_id,
+                        params=params,
+                        times_ms=times,
+                        metrics=metrics,
+                        compile_ms=compile_ms,
+                        flops=flops,
+                        bytes_per_iter=(
+                            bytes_per_iter if bytes_per_iter is not None else auto_bytes(resolved)
+                        ),
+                    )
+                )
 
     result = BenchResult(
         bench_name=fn,

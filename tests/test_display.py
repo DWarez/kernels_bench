@@ -175,3 +175,37 @@ def test_format_throughput_combined():
         bytes_per_iter=8 * 10**8,
     )
     assert _format_throughput(kr) == "2.00 TFLOP/s  800.0 GB/s"
+
+
+def test_print_results_uses_summary_view_for_large_sweeps(capsys):
+    """At/above the threshold, the per-combo block stats lines disappear."""
+    from kernels_bench.display import SWEEP_SUMMARY_THRESHOLD, print_results
+    from kernels_bench.runner import BenchResult
+
+    rows = [
+        KernelResult(kernel_id="a", params={"M": 64 * (i + 1)}, times_ms=[1.0 + i])
+        for i in range(SWEEP_SUMMARY_THRESHOLD)
+    ]
+    print_results(BenchResult(bench_name="b", kernel_results=rows))
+    out = capsys.readouterr().out
+
+    # Compact view drops the verbose stats / "PARAMS:" headers.
+    assert "PARAMS:" not in out
+    assert "p10=" not in out
+    # Each combo still shown as a row.
+    for kr in rows:
+        assert f"M={kr.params['M']}" in out
+
+
+def test_print_results_keeps_full_blocks_below_threshold(capsys):
+    from kernels_bench.display import SWEEP_SUMMARY_THRESHOLD, print_results
+    from kernels_bench.runner import BenchResult
+
+    rows = [
+        KernelResult(kernel_id="a", params={"M": 64 * (i + 1)}, times_ms=[1.0 + i])
+        for i in range(SWEEP_SUMMARY_THRESHOLD - 1)
+    ]
+    print_results(BenchResult(bench_name="b", kernel_results=rows))
+    out = capsys.readouterr().out
+    assert "PARAMS:" in out
+    assert "p10=" in out

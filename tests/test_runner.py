@@ -267,3 +267,38 @@ def test_bench_result_to_dict_compile_ms_none_when_missing():
     kr = KernelResult(kernel_id="k", params={}, times_ms=[1.0])
     d = BenchResult(bench_name="b", kernel_results=[kr]).to_dict()
     assert d["results"][0]["compile_ms"] is None
+
+
+def test_to_csv_rows_columns_and_param_union():
+    """Param keys are unioned across results so the column set is stable."""
+    a = KernelResult(kernel_id="a", params={"M": 1, "N": 2}, times_ms=[1.0])
+    b = KernelResult(kernel_id="b", params={"M": 3}, times_ms=[2.0])  # missing N
+    header, rows = BenchResult(bench_name="x", kernel_results=[a, b]).to_csv_rows()
+
+    assert header[0] == "kernel_id"
+    # M and N appear after kernel_id, sorted, before metrics columns
+    assert header[1:3] == ["M", "N"]
+    assert "median_ms" in header and "gb_per_s" in header
+    assert rows[0]["M"] == 1
+    assert rows[0]["N"] == 2
+    assert rows[1]["M"] == 3
+    assert rows[1]["N"] == ""  # absent param renders as empty
+
+
+def test_to_csv_rows_includes_throughput_and_metrics():
+    metrics = RunMetrics(peak_memory_mb=8.0, util_mean=50.0, util_peak=99.0, util_samples=10)
+    kr = KernelResult(
+        kernel_id="k",
+        params={},
+        times_ms=[1.0],
+        metrics=metrics,
+        flops=10**9,
+        bytes_per_iter=10**9,
+    )
+    _, rows = BenchResult(bench_name="x", kernel_results=[kr]).to_csv_rows()
+    row = rows[0]
+    assert row["gflops_per_s"] == 1000.0
+    assert row["gb_per_s"] == 1000.0
+    assert row["peak_memory_mb"] == 8.0
+    assert row["util_mean"] == 50.0
+    assert row["util_peak"] == 99.0

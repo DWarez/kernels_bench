@@ -3,7 +3,7 @@
 import pytest
 import torch
 
-from kernels_bench.bench import Bench, _resolve_workload, auto_bytes
+from kernels_bench.bench import Bench, _resolve_workload, auto_bytes, param_combinations
 from kernels_bench.spec import TensorSpec
 
 
@@ -119,3 +119,14 @@ def test_auto_bytes_sums_specs():
 
 def test_auto_bytes_empty():
     assert auto_bytes([]) == 0
+
+
+def test_param_combinations_empty():
+    assert param_combinations({}) == [{}]
+
+
+def test_param_combinations_grid():
+    combos = param_combinations({"M": [1, 2], "N": [10, 20]})
+    assert {"M": 1, "N": 10} in combos
+    assert {"M": 2, "N": 20} in combos
+    assert len(combos) == 4

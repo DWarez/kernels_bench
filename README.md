@@ -176,6 +176,27 @@ Pass `--no-metrics` to skip collection entirely — useful if you want zero over
 
 Metrics for MPS backends are not yet collected; those fields stay `null` in the JSON export.
 
+### How timing works
+
+Reported times are **device time** measured with CUDA/MPS events, not wall-clock
+time around the Python call. This matters: launching a kernel from Python costs
+tens of microseconds, so for a kernel that runs in a few microseconds, wall-clock
+timing measures the launch overhead, not the kernel — bandwidth/FLOP numbers can
+read an order of magnitude too low. Each reported sample batches enough
+back-to-back calls to amortize the fixed timer cost, then divides back out to a
+per-call time.
+
+Warmup runs until the GPU reaches steady-state (boost) clocks — a fixed call
+count isn't enough, since a fast kernel can run thousands of times before the
+clocks ramp. `--warmup` sets a *minimum* call count; warmup continues past it
+until the clocks have settled. The first call is timed separately and reported as
+`compile` (JIT/autotune cost).
+
+> **Note:** numbers are *warm-cache*. Repeated back-to-back calls leave inputs in
+> L2, so a small tensor that fits in cache can report bandwidth above what a
+> cold DRAM read would achieve. This reflects tight-loop reuse; cold-cache
+> (L2-flushed) measurement is a planned opt-in.
+
 ## JSON export
 
 Add `-o results.json` to any command to save results:

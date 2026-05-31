@@ -2,8 +2,9 @@
 
 This package decouples the benchmark engine from any specific GPU backend.
 To add a new backend, create a new Runtime subclass, then register it in
-_RUNTIMES below. Per-iteration timing is handled by torch.utils.benchmark.Timer
-in runner._timed_loop, with runtime.synchronize() injected into the stmt.
+_RUNTIMES below. Measurement timing is handled by the runtime's `time_calls`
+(device events on CUDA/MPS, a synchronized host clock otherwise), driven by
+runner._timed_loop.
 """
 
 from kernels_bench.runtime._base import MetricsCollector, RunMetrics, Runtime

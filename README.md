@@ -51,7 +51,7 @@ kernels-bench quick \
   -n 100
 ```
 
-The `--validate` flag runs each kernel once on the same input data and checks that outputs match across kernels (using `torch.allclose`). Tolerance is configurable with `--atol` and `--rtol`.
+The `--validate` flag runs each kernel once on the same input data and checks that outputs match across kernels (using `torch.allclose`). Tolerance is configurable with `--atol` and `--rtol`. Outputs are taken from any `:output` args you declare, or — for functional kernels like `flash_attn_func` that return their result — from the return value. If a kernel produces neither (e.g. it mutates an input in place), validation errors out rather than reporting a hollow pass over zero elements.
 
 ### Heavier workloads
 

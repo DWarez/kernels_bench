@@ -4,7 +4,12 @@ import pytest
 import torch
 
 from kernels_bench.spec import TensorSpec
-from kernels_bench.validate import _compare_tensors, validate_quick
+from kernels_bench.validate import (
+    ValidationError,
+    _compare_tensors,
+    validate_bench,
+    validate_quick,
+)
 
 
 @pytest.mark.gpu
@@ -86,6 +91,110 @@ def test_validate_quick_mismatching(runtime, device):
     assert len(report.comparisons) == 1
     assert not report.comparisons[0].passed
     assert report.comparisons[0].mismatched_elements > 0
+
+
+class FakeKernelFunctional:
+    """Functional kernel: returns y = x * 2 instead of writing into a buffer."""
+
+    def my_fn(self, x: torch.Tensor) -> torch.Tensor:
+        return x * 2
+
+
+class FakeKernelFunctionalWrong:
+    """Functional kernel that returns x * 3 (intentionally wrong)."""
+
+    def my_fn(self, x: torch.Tensor) -> torch.Tensor:
+        return x * 3
+
+
+class FakeKernelTupleReturn:
+    """Returns a tuple (out, aux) like flash attention's (out, lse)."""
+
+    def my_fn(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        return x * 2, x.sum(dim=-1)
+
+
+class FakeKernelInPlace:
+    """Mutates an input in place and returns None — nothing capturable."""
+
+    def my_fn(self, x: torch.Tensor) -> None:
+        x.mul_(2)
+
+
+@pytest.mark.gpu
+def test_validate_quick_functional_return_matching(runtime, device):
+    """A kernel that *returns* its output is captured and actually compared."""
+    specs = [TensorSpec("x", shape=(64, 64), dtype=torch.float16, device=device, role="input")]
+    kernels = {"a": FakeKernelFunctional(), "b": FakeKernelFunctional()}
+    report = validate_quick(kernels=kernels, fn_name="my_fn", specs=specs, runtime=runtime)
+    assert report.all_passed
+    # The whole point: it compared real elements, not 0.
+    assert report.comparisons[0].total_elements == 64 * 64
+
+
+@pytest.mark.gpu
+def test_validate_quick_functional_return_mismatching(runtime, device):
+    specs = [TensorSpec("x", shape=(64, 64), dtype=torch.float16, device=device, role="input")]
+    kernels = {"right": FakeKernelFunctional(), "wrong": FakeKernelFunctionalWrong()}
+    report = validate_quick(kernels=kernels, fn_name="my_fn", specs=specs, runtime=runtime)
+    assert not report.all_passed
+    assert report.comparisons[0].mismatched_elements > 0
+
+
+@pytest.mark.gpu
+def test_validate_quick_tuple_return(runtime, device):
+    """Every tensor in a tuple return is compared."""
+    specs = [TensorSpec("x", shape=(64, 64), dtype=torch.float16, device=device, role="input")]
+    kernels = {"a": FakeKernelTupleReturn(), "b": FakeKernelTupleReturn()}
+    report = validate_quick(kernels=kernels, fn_name="my_fn", specs=specs, runtime=runtime)
+    assert report.all_passed
+    assert report.comparisons[0].total_elements == 64 * 64 + 64  # out + aux
+
+
+@pytest.mark.gpu
+def test_validate_quick_no_output_raises(runtime, device):
+    """In-place kernel returning None yields nothing to compare → loud error, not PASS."""
+    specs = [TensorSpec("x", shape=(64, 64), dtype=torch.float16, device=device, role="input")]
+    kernels = {"a": FakeKernelInPlace(), "b": FakeKernelInPlace()}
+    with pytest.raises(ValidationError, match="no output tensors"):
+        validate_quick(kernels=kernels, fn_name="my_fn", specs=specs, runtime=runtime)
+
+
+@pytest.mark.gpu
+def test_validate_quick_mismatched_output_count_raises(runtime, device):
+    specs = [TensorSpec("x", shape=(64, 64), dtype=torch.float16, device=device, role="input")]
+    kernels = {"single": FakeKernelFunctional(), "tuple": FakeKernelTupleReturn()}
+    with pytest.raises(ValidationError, match="different numbers of output"):
+        validate_quick(kernels=kernels, fn_name="my_fn", specs=specs, runtime=runtime)
+
+
+@pytest.mark.gpu
+def test_validate_bench_functional_return(runtime, device):
+    """The bench path also captures a returned result when no output spec is declared."""
+
+    def bench_fn(kernel, x):
+        return kernel.my_fn(x)
+
+    input_specs = [
+        TensorSpec("x", shape=(64, 64), dtype=torch.float16, device=device, role="input")
+    ]
+    kernels = {"a": FakeKernelFunctional(), "b": FakeKernelFunctional()}
+    report = validate_bench(bench_fn, kernels, input_specs, [], runtime)
+    assert report.all_passed
+    assert report.comparisons[0].total_elements == 64 * 64
+
+
+@pytest.mark.gpu
+def test_validate_bench_no_output_raises(runtime, device):
+    def bench_fn(kernel, x):
+        kernel.my_fn(x)  # in-place, returns None
+
+    input_specs = [
+        TensorSpec("x", shape=(64, 64), dtype=torch.float16, device=device, role="input")
+    ]
+    kernels = {"a": FakeKernelInPlace(), "b": FakeKernelInPlace()}
+    with pytest.raises(ValidationError, match="no output tensors"):
+        validate_bench(bench_fn, kernels, input_specs, [], runtime)
 
 
 @pytest.mark.gpu

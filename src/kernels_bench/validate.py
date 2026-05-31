@@ -13,6 +13,38 @@ if TYPE_CHECKING:
     from kernels_bench.runtime import Runtime
 
 
+class ValidationError(ValueError):
+    """Raised when --validate is requested but the outputs cannot be compared.
+
+    e.g. a kernel produced no capturable output, or two kernels returned
+    structurally different outputs. Distinct from a *mismatch* (which is a
+    normal FAIL result), this signals the comparison itself can't be done.
+    """
+
+
+def _tensors_from_return(ret: Any) -> list[torch.Tensor]:
+    """Extract output tensors from a kernel's return value.
+
+    Functional kernels return their result instead of writing into a
+    preallocated buffer. A single tensor, or a tuple/list of tensors (e.g.
+    flash attention's ``(out, lse, ...)``), are all captured; non-tensor
+    members (metadata, None) are ignored.
+    """
+    if isinstance(ret, torch.Tensor):
+        return [ret]
+    if isinstance(ret, (tuple, list)):
+        return [t for t in ret if isinstance(t, torch.Tensor)]
+    return []
+
+
+def _named_return_tensors(ret: Any) -> dict[str, torch.Tensor]:
+    """Name a return value's tensors for the dict-keyed bench comparison."""
+    tensors = _tensors_from_return(ret)
+    if len(tensors) == 1:
+        return {"return": tensors[0]}
+    return {f"return_{i}": t for i, t in enumerate(tensors)}
+
+
 @dataclasses.dataclass(frozen=True)
 class ValidationResult:
     """Result of comparing two kernels' outputs."""
@@ -55,7 +87,11 @@ def _collect_outputs_quick(
 ) -> list[torch.Tensor]:
     """Run a kernel function once and return the output tensors.
 
-    Uses shared input tensors so all kernels get the same inputs.
+    Uses shared input tensors so all kernels get the same inputs. Outputs come
+    from preallocated ``role=="output"`` buffers; if the kernel declares none,
+    its return value is captured instead, so functional kernels (which return
+    their result rather than writing into a buffer) are actually compared
+    rather than silently passing over zero elements.
     """
     fn = getattr(kernel, fn_name)
 
@@ -71,8 +107,10 @@ def _collect_outputs_quick(
         else:
             args.append(input_tensors[i])
 
-    fn(*args)
+    ret = fn(*args)
     runtime.synchronize()
+    if not output_tensors:
+        output_tensors = _tensors_from_return(ret)
     return output_tensors
 
 
@@ -86,7 +124,10 @@ def _collect_outputs_bench(
 ) -> dict[str, torch.Tensor]:
     """Run a bench function once and return the output tensors by name.
 
-    Uses shared input tensors so all kernels get the same inputs.
+    Uses shared input tensors so all kernels get the same inputs. As in the
+    quick path, a bench function that returns its result instead of writing
+    into a declared output spec has its return value captured under synthetic
+    ``return``/``return_N`` keys.
     """
     # Allocate fresh outputs on the same device as the inputs
     device = next(iter(input_tensors.values())).device.type
@@ -98,8 +139,10 @@ def _collect_outputs_bench(
     args.extend(input_tensors[s.name] for s in input_specs)
     args.extend(output_tensors[s.name] for s in output_specs)
 
-    bench_fn(*args)
+    ret = bench_fn(*args)
     runtime.synchronize()
+    if not output_tensors:
+        output_tensors = _named_return_tensors(ret)
     return output_tensors
 
 
@@ -148,9 +191,14 @@ def validate_quick(
     # Collect outputs for each kernel
     kernel_outputs: dict[str, list[torch.Tensor]] = {}
     for kernel_id, kernel in kernels.items():
-        kernel_outputs[kernel_id] = _collect_outputs_quick(
-            kernel, fn_name, specs, input_tensors, runtime
-        )
+        outputs = _collect_outputs_quick(kernel, fn_name, specs, input_tensors, runtime)
+        if not outputs:
+            raise ValidationError(
+                f"cannot validate {kernel_id!r}: {fn_name!r} produced no output tensors "
+                "to compare. Declare an :output arg (e.g. y:1024,1024:float16:output), "
+                "or have the function return its result."
+            )
+        kernel_outputs[kernel_id] = outputs
 
     # Pairwise comparison
     kernel_ids = list(kernels.keys())
@@ -161,6 +209,11 @@ def validate_quick(
             id_a, id_b = kernel_ids[i], kernel_ids[j]
             outputs_a = kernel_outputs[id_a]
             outputs_b = kernel_outputs[id_b]
+            if len(outputs_a) != len(outputs_b):
+                raise ValidationError(
+                    f"{id_a!r} and {id_b!r} returned different numbers of output tensors "
+                    f"({len(outputs_a)} vs {len(outputs_b)}); cannot compare."
+                )
 
             # Compare each output tensor
             all_passed = True
@@ -210,9 +263,16 @@ def validate_bench(
     # Collect outputs for each kernel
     kernel_outputs: dict[str, dict[str, torch.Tensor]] = {}
     for kernel_id, kernel in kernels.items():
-        kernel_outputs[kernel_id] = _collect_outputs_bench(
+        outputs = _collect_outputs_bench(
             bench_fn, kernel, input_specs, output_specs, input_tensors, runtime
         )
+        if not outputs:
+            raise ValidationError(
+                f"cannot validate {kernel_id!r}: the bench function produced no output "
+                "tensors to compare. Declare an output TensorSpec (role='output'), or "
+                "return the result from the bench function."
+            )
+        kernel_outputs[kernel_id] = outputs
 
     # Pairwise comparison
     kernel_ids = list(kernels.keys())
@@ -221,6 +281,12 @@ def validate_bench(
     for i in range(len(kernel_ids)):
         for j in range(i + 1, len(kernel_ids)):
             id_a, id_b = kernel_ids[i], kernel_ids[j]
+            if kernel_outputs[id_a].keys() != kernel_outputs[id_b].keys():
+                raise ValidationError(
+                    f"{id_a!r} and {id_b!r} produced different output tensors "
+                    f"({sorted(kernel_outputs[id_a])} vs {sorted(kernel_outputs[id_b])}); "
+                    "cannot compare."
+                )
 
             all_passed = True
             total_max_abs = 0.0

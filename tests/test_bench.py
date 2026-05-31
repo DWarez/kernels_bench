@@ -3,7 +3,13 @@
 import pytest
 import torch
 
-from kernels_bench.bench import Bench, _resolve_workload, auto_bytes, param_combinations
+from kernels_bench.bench import (
+    Bench,
+    _resolve_workload,
+    auto_bytes,
+    param_combinations,
+    split_kernel_ref,
+)
 from kernels_bench.spec import TensorSpec
 
 
@@ -130,3 +136,18 @@ def test_param_combinations_grid():
     assert {"M": 1, "N": 10} in combos
     assert {"M": 2, "N": 20} in combos
     assert len(combos) == 4
+
+
+def test_split_kernel_ref_plain():
+    assert split_kernel_ref("org/repo") == ("org/repo", None)
+
+
+def test_split_kernel_ref_with_revision():
+    assert split_kernel_ref("org/repo@dev") == ("org/repo", "dev")
+    assert split_kernel_ref("org/repo@v1.2.0") == ("org/repo", "v1.2.0")
+    assert split_kernel_ref("org/repo@a1b2c3d") == ("org/repo", "a1b2c3d")
+
+
+def test_split_kernel_ref_empty_revision():
+    # A trailing '@' means "no revision", not an empty ref.
+    assert split_kernel_ref("org/repo@") == ("org/repo", None)

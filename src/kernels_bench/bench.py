@@ -44,6 +44,18 @@ def auto_bytes(specs: list[TensorSpec]) -> int:
     return sum(s.nbytes for s in specs)
 
 
+def split_kernel_ref(spec: str) -> tuple[str, str | None]:
+    """Split a ``repo_id[@revision]`` spec into ``(repo_id, revision)``.
+
+    The optional ``@revision`` is any git ref the Hub understands — a branch,
+    tag, or commit SHA — handed to ``get_kernel(revision=...)`` so two revisions
+    of the same repo can be benchmarked against each other. No ``@`` (or an
+    empty one) means the default revision.
+    """
+    repo_id, _, revision = spec.partition("@")
+    return repo_id, (revision or None)
+
+
 class Bench:
     """Define and run a benchmark comparing HuggingFace Kernels.
 
@@ -147,11 +159,14 @@ class Bench:
         if runtime is None:
             runtime = detect_runtime()
 
-        # Load all kernels upfront (needed for validation)
+        # Load all kernels upfront (needed for validation). Each id may carry an
+        # @revision suffix; the full spec stays the result key/label so distinct
+        # revisions of one repo show up separately.
         loaded_kernels: dict[str, Any] = {}
         for kernel_id in kernels:
+            repo_id, revision = split_kernel_ref(kernel_id)
             try:
-                loaded_kernels[kernel_id] = get_kernel(kernel_id)
+                loaded_kernels[kernel_id] = get_kernel(repo_id, revision=revision)
             except Exception as e:
                 raise RuntimeError(f"failed to load kernel {kernel_id!r}: {e}") from e
 

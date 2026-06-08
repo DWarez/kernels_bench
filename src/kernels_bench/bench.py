@@ -59,6 +59,23 @@ def split_kernel_ref(spec: str) -> tuple[str, str | None]:
     return repo_id, (revision or None)
 
 
+# Revision used when a kernel spec carries no ``@revision``. Recent ``kernels``
+# releases require an explicit ``version`` or ``revision`` and reject a bare
+# ``get_kernel(repo_id)``; ``"main"`` restores the prior default-branch behavior.
+DEFAULT_REVISION = "main"
+
+
+def load_kernel(spec: str) -> Any:
+    """Load a kernel from a ``repo_id[@revision]`` spec, defaulting the revision.
+
+    When the spec has no ``@revision`` we fall back to ``DEFAULT_REVISION``
+    rather than passing ``None`` — newer ``kernels`` raises on an unspecified
+    revision. An explicit ``@revision`` is honored unchanged.
+    """
+    repo_id, revision = split_kernel_ref(spec)
+    return get_kernel(repo_id, revision=revision or DEFAULT_REVISION)
+
+
 class Bench:
     """Define and run a benchmark comparing HuggingFace Kernels.
 
@@ -171,9 +188,8 @@ class Bench:
         # revisions of one repo show up separately.
         loaded_kernels: dict[str, Any] = {}
         for kernel_id in kernels:
-            repo_id, revision = split_kernel_ref(kernel_id)
             try:
-                loaded_kernels[kernel_id] = get_kernel(repo_id, revision=revision)
+                loaded_kernels[kernel_id] = load_kernel(kernel_id)
             except Exception as e:
                 raise RuntimeError(f"failed to load kernel {kernel_id!r}: {e}") from e
 

@@ -420,9 +420,7 @@ def quick(
         kernels-bench quick -k kernels-community/activation
         --fn gelu_fast --arg y:1024,1024:float16:output --arg x:1024,1024:float16:input
     """
-    from kernels import get_kernel
-
-    from kernels_bench.bench import auto_bytes, param_combinations, split_kernel_ref
+    from kernels_bench.bench import auto_bytes, load_kernel, param_combinations
     from kernels_bench.progress import benchmark_progress, make_on_step
     from kernels_bench.runner import KernelResult, _resolve_specs, run_benchmark_quick
     from kernels_bench.runtime import detect_runtime
@@ -477,9 +475,8 @@ def quick(
     # spec stays the result key/label so distinct revisions show up separately.
     loaded_kernels: dict[str, object] = {}
     for kernel_id in kernel_list:
-        repo_id, revision = split_kernel_ref(kernel_id)
         try:
-            loaded_kernels[kernel_id] = get_kernel(repo_id, revision=revision)
+            loaded_kernels[kernel_id] = load_kernel(kernel_id)
         except Exception as e:
             raise click.ClickException(f"failed to load kernel {kernel_id!r}: {e}") from e
 
@@ -556,7 +553,7 @@ def list_functions(kernel_id: str) -> None:
     import logging
     import warnings
 
-    from kernels import get_kernel
+    from kernels_bench.bench import load_kernel
 
     # Suppress HF download progress bar noise
     logging.disable(logging.INFO)
@@ -566,7 +563,7 @@ def list_functions(kernel_id: str) -> None:
         old_stderr = sys.stderr
         sys.stderr = open(os.devnull, "w")  # noqa: SIM115
         try:
-            kernel = get_kernel(kernel_id)
+            kernel = load_kernel(kernel_id)
         finally:
             sys.stderr.close()
             sys.stderr = old_stderr

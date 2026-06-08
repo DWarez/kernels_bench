@@ -137,6 +137,49 @@ import json
 json.dump(result.to_dict(), open("results.json", "w"), indent=2)
 ```
 
+## Remote benchmarking (no local GPU required)
+
+Want to know whether kernel A or B is faster on an H200 you don't have? Add
+`--remote <flavor>` to `quick` or `run` and the benchmark executes on an
+ephemeral [HuggingFace Jobs](https://huggingface.co/docs/huggingface_hub/guides/jobs)
+GPU instead of locally. The results stream back and render exactly as a local
+run — same table, same `-o` export.
+
+```bash
+kernels-bench quick \
+  -k kernels-community/activation \
+  --fn gelu_fast \
+  --arg y:1024,1024:float16:output \
+  --arg x:1024,1024:float16:input \
+  --validate \
+  --remote h200
+```
+
+```bash
+kernels-bench run bench_gelu.py -k kernels-community/activation --remote a100-large
+```
+
+List the available GPU flavors:
+
+```bash
+kernels-bench hardware
+```
+
+Single-GPU options include `t4-small`, `l4x1`, `l40sx1`, `a10g-small`,
+`a100-large`, and `h200` (the single-GPU Hopper card — HF Jobs has no `h100`).
+Multi-GPU and larger variants (`a100x8`, `h200x4`, …) are listed too.
+
+**Notes:**
+
+- Requires a HuggingFace login (`hf auth login`) or `HF_TOKEN`. Your token is
+  forwarded to the job so private kernels work.
+- `--remote-timeout` (default `30m`) caps the job's duration — and therefore its
+  cost. Use a cheap flavor like `t4-small` for a first smoke test.
+- Remote runs execute the **published** version of kernels-bench from git, not
+  your local working tree. To benchmark an unmerged branch, push it and set
+  `KB_REMOTE_REF=<branch>`.
+- `--profile` is local-only (the trace can't be streamed back).
+
 ## Output
 
 Results are displayed in a box-drawing table showing timing, comparison bars, and GPU info:
@@ -218,6 +261,7 @@ The JSON includes device info, timing stats, raw per-iteration times, and valida
 
 ```
 kernels-bench list <kernel-id>              # list functions in a kernel
+kernels-bench hardware                      # list GPU flavors for --remote
 kernels-bench quick [options]               # benchmark without a bench file
 kernels-bench run <bench-file> [options]    # benchmark with a bench file
 ```
@@ -234,6 +278,8 @@ kernels-bench run <bench-file> [options]    # benchmark with a bench file
 | `--atol` | Absolute tolerance for validation (default: 1e-3) |
 | `--rtol` | Relative tolerance for validation (default: 1e-3) |
 | `--no-metrics` | Skip collecting peak memory and GPU utilization |
+| `--remote` | Run on a HuggingFace Jobs GPU of this flavor (e.g. `h200`) |
+| `--remote-timeout` | Max remote job duration (default: 30m) |
 
 ### `quick` specific options
 

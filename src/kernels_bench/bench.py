@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import itertools
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from kernels import get_kernel
+
+if TYPE_CHECKING:
+    from rich.console import Console
 
 from kernels_bench.progress import benchmark_progress, make_on_step
 from kernels_bench.runner import BenchResult, KernelResult, _resolve_specs, run_benchmark
@@ -139,6 +142,7 @@ class Bench:
         runtime: Runtime | None = None,
         collect_metrics: bool = True,
         profile: bool = False,
+        console: Console | None = None,
     ) -> BenchResult:
         """Run the benchmark for all kernels and param combinations.
 
@@ -152,6 +156,9 @@ class Bench:
             runtime: GPU runtime to use (auto-detected if not provided)
             collect_metrics: if True (default), collect peak memory and GPU utilization
                 during each timed window. Set False to skip the background sampler.
+            console: Rich console for the progress display. Defaults to stdout; the
+                remote worker passes a stderr console so progress never collides with
+                the result it writes to stdout.
         """
         if self._fn is None:
             raise RuntimeError("no benchmark function registered — use @bench.fn")
@@ -190,7 +197,7 @@ class Bench:
         param_combos = self._param_combinations()
         all_results: list[KernelResult] = []
 
-        with benchmark_progress() as progress:
+        with benchmark_progress(console=console) as progress:
             for kernel_id, kernel in loaded_kernels.items():
                 for param_set in param_combos:
                     params_str = ", ".join(f"{k}={v}" for k, v in sorted(param_set.items()))

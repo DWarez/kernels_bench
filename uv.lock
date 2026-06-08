@@ -290,6 +290,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
+    { name = "huggingface-hub" },
     { name = "kernels" },
     { name = "numpy" },
     { name = "nvidia-ml-py" },
@@ -308,6 +309,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "click", specifier = ">=8.0" },
+    { name = "huggingface-hub", specifier = ">=1.0" },
     { name = "kernels" },
     { name = "numpy" },
     { name = "nvidia-ml-py" },

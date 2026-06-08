@@ -32,6 +32,16 @@ class RunMetrics:
             "util_samples": self.util_samples,
         }
 
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> RunMetrics:
+        """Rebuild from a ``to_dict`` payload (used for remote-result transport)."""
+        return cls(
+            peak_memory_mb=d.get("peak_memory_mb"),
+            util_mean=d.get("util_mean"),
+            util_peak=d.get("util_peak"),
+            util_samples=d.get("util_samples", 0),
+        )
+
 
 class MetricsCollector(ABC):
     """Collects device metrics over a timed region.

@@ -91,11 +91,17 @@ def run_remote(
 
     secrets = {"HF_TOKEN": token} if token else None
 
+    # HF Jobs instances are heterogeneous: the NVIDIA driver may be older than
+    # the latest torch wheel's CUDA build (e.g. a CUDA-12.9 driver can't run a
+    # cu130 torch, so torch.cuda goes unavailable). `UV_TORCH_BACKEND=auto` makes
+    # uv detect the instance's driver and install the matching torch wheel.
+    job_env = {"KB_REQUEST": request.to_json(), "UV_TORCH_BACKEND": "auto"}
+
     run_kwargs = dict(
         script=str(_WORKER),
         script_args=script_args,
         dependencies=[_dependency_spec()],
-        env={"KB_REQUEST": request.to_json()},
+        env=job_env,
         secrets=secrets,
         flavor=flavor,
         timeout=timeout,

@@ -8,6 +8,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import Literal
 
 import click
 import torch
@@ -120,6 +121,64 @@ def _handle_output(result: BenchResult, output: str | None) -> None:
         click.echo(f"\nResults saved to {output}")
 
 
+def _run_remote_bench(
+    *,
+    mode: Literal["quick", "run"],
+    kernel_list: list[str],
+    flavor: str,
+    remote_timeout: str,
+    warmup: int,
+    iterations: int,
+    validate: bool,
+    atol: float,
+    rtol: float,
+    no_metrics: bool,
+    profile: bool,
+    output: str | None,
+    namespace: str | None = None,
+    fn: str | None = None,
+    args: tuple[str, ...] = (),
+    sweeps: tuple[str, ...] = (),
+    flops: int | None = None,
+    bytes_per_iter: int | None = None,
+    bench_file: str | None = None,
+) -> None:
+    """Build a RemoteRequest, run it on HF Jobs, and render the results."""
+    if profile:
+        raise click.ClickException(
+            "--profile is not supported with --remote (the trace can't be streamed back)."
+        )
+
+    from kernels_bench.remote import RemoteRequest, run_remote, validate_flavor
+
+    # Org namespace (where Jobs quota/credits live) — flag wins, else env.
+    namespace = namespace or os.environ.get("KB_JOB_NAMESPACE")
+    flavor = validate_flavor(flavor)
+    request = RemoteRequest(
+        mode=mode,
+        kernels=kernel_list,
+        warmup=warmup,
+        iterations=iterations,
+        validate_outputs=validate,
+        atol=atol,
+        rtol=rtol,
+        collect_metrics=not no_metrics,
+        fn=fn,
+        args=list(args),
+        sweeps=list(sweeps),
+        flops=flops,
+        bytes_per_iter=bytes_per_iter,
+    )
+    result = run_remote(
+        request,
+        flavor=flavor,
+        bench_file=bench_file,
+        timeout=remote_timeout,
+        namespace=namespace,
+    )
+    _handle_output(result, output)
+
+
 @click.group()
 @click.version_option()
 def main() -> None:
@@ -161,6 +220,27 @@ def main() -> None:
     is_flag=True,
     help="Run torch.profiler after timing and print the per-op breakdown.",
 )
+@click.option(
+    "--remote",
+    default=None,
+    metavar="FLAVOR",
+    help="Run on a HuggingFace Jobs GPU of this flavor instead of locally "
+    "(e.g. h200, a100-large). See `kernels-bench hardware`.",
+)
+@click.option(
+    "--remote-timeout",
+    default="30m",
+    show_default=True,
+    help="Max remote job duration (HF format, e.g. 30m, 1h). Caps cost.",
+)
+@click.option(
+    "--remote-namespace",
+    default=None,
+    metavar="ORG",
+    help="Account/org the HF Job runs under (defaults to your personal "
+    "namespace, or the KB_JOB_NAMESPACE env var). Use your org if it carries "
+    "the Jobs quota.",
+)
 def run(
     bench_file: str,
     kernels: str,
@@ -172,10 +252,33 @@ def run(
     rtol: float,
     no_metrics: bool,
     profile: bool,
+    remote: str | None,
+    remote_timeout: str,
+    remote_namespace: str | None,
 ) -> None:
     """Run a benchmark defined in BENCH_FILE against the specified kernels."""
-    bench = _load_bench_from_file(bench_file)
     kernel_list = [k.strip() for k in kernels.split(",")]
+
+    if remote:
+        _run_remote_bench(
+            mode="run",
+            kernel_list=kernel_list,
+            flavor=remote,
+            remote_timeout=remote_timeout,
+            namespace=remote_namespace,
+            warmup=warmup,
+            iterations=iterations,
+            validate=validate,
+            atol=atol,
+            rtol=rtol,
+            no_metrics=no_metrics,
+            profile=profile,
+            output=output,
+            bench_file=bench_file,
+        )
+        return
+
+    bench = _load_bench_from_file(bench_file)
 
     try:
         result = bench.run(
@@ -268,6 +371,27 @@ def run(
         "(e.g. x:M,M:float16:input) to bind them."
     ),
 )
+@click.option(
+    "--remote",
+    default=None,
+    metavar="FLAVOR",
+    help="Run on a HuggingFace Jobs GPU of this flavor instead of locally "
+    "(e.g. h200, a100-large). See `kernels-bench hardware`.",
+)
+@click.option(
+    "--remote-timeout",
+    default="30m",
+    show_default=True,
+    help="Max remote job duration (HF format, e.g. 30m, 1h). Caps cost.",
+)
+@click.option(
+    "--remote-namespace",
+    default=None,
+    metavar="ORG",
+    help="Account/org the HF Job runs under (defaults to your personal "
+    "namespace, or the KB_JOB_NAMESPACE env var). Use your org if it carries "
+    "the Jobs quota.",
+)
 def quick(
     kernels: str,
     fn: str,
@@ -283,6 +407,9 @@ def quick(
     flops: int | None,
     bytes_per_iter: int | None,
     sweeps: tuple[str, ...],
+    remote: str | None,
+    remote_timeout: str,
+    remote_namespace: str | None,
 ) -> None:
     """Benchmark a kernel function directly — no bench file needed.
 
@@ -293,9 +420,7 @@ def quick(
         kernels-bench quick -k kernels-community/activation
         --fn gelu_fast --arg y:1024,1024:float16:output --arg x:1024,1024:float16:input
     """
-    from kernels import get_kernel
-
-    from kernels_bench.bench import auto_bytes, param_combinations, split_kernel_ref
+    from kernels_bench.bench import auto_bytes, load_kernel, param_combinations
     from kernels_bench.progress import benchmark_progress, make_on_step
     from kernels_bench.runner import KernelResult, _resolve_specs, run_benchmark_quick
     from kernels_bench.runtime import detect_runtime
@@ -318,15 +443,40 @@ def quick(
 
     combos = param_combinations(sweep_dict)
     kernel_list = [k.strip() for k in kernels.split(",")]
+
+    # Remote: ship the (already-validated) request to an HF Jobs GPU and render
+    # the results that come back. Never touches the local runtime.
+    if remote:
+        _run_remote_bench(
+            mode="quick",
+            kernel_list=kernel_list,
+            flavor=remote,
+            remote_timeout=remote_timeout,
+            namespace=remote_namespace,
+            warmup=warmup,
+            iterations=iterations,
+            validate=validate,
+            atol=atol,
+            rtol=rtol,
+            no_metrics=no_metrics,
+            profile=profile,
+            output=output,
+            fn=fn,
+            args=args,
+            sweeps=sweeps,
+            flops=flops,
+            bytes_per_iter=bytes_per_iter,
+        )
+        return
+
     runtime = detect_runtime()
 
     # Load all kernels upfront. Each id may carry an @revision suffix; the full
     # spec stays the result key/label so distinct revisions show up separately.
     loaded_kernels: dict[str, object] = {}
     for kernel_id in kernel_list:
-        repo_id, revision = split_kernel_ref(kernel_id)
         try:
-            loaded_kernels[kernel_id] = get_kernel(repo_id, revision=revision)
+            loaded_kernels[kernel_id] = load_kernel(kernel_id)
         except Exception as e:
             raise click.ClickException(f"failed to load kernel {kernel_id!r}: {e}") from e
 
@@ -403,7 +553,7 @@ def list_functions(kernel_id: str) -> None:
     import logging
     import warnings
 
-    from kernels import get_kernel
+    from kernels_bench.bench import load_kernel
 
     # Suppress HF download progress bar noise
     logging.disable(logging.INFO)
@@ -413,7 +563,7 @@ def list_functions(kernel_id: str) -> None:
         old_stderr = sys.stderr
         sys.stderr = open(os.devnull, "w")  # noqa: SIM115
         try:
-            kernel = get_kernel(kernel_id)
+            kernel = load_kernel(kernel_id)
         finally:
             sys.stderr.close()
             sys.stderr = old_stderr
@@ -441,3 +591,29 @@ def list_functions(kernel_id: str) -> None:
         table.add_row(fn_name)
     console.print(table)
     console.print(f"\n[dim]Use with:[/dim] kernels-bench quick -k {kernel_id} --fn <function>")
+
+
+@main.command()
+def hardware() -> None:
+    """List the GPU flavors available for remote benchmarking on HF Jobs.
+
+    Use any flavor below with `--remote` on `quick` or `run`, e.g.
+
+        kernels-bench quick -k org/act --fn gelu_fast --arg ... --remote h200
+    """
+    from rich.console import Console
+    from rich.table import Table
+
+    from kernels_bench.remote import gpu_flavors_grouped
+
+    console = Console()
+    table = Table(title="HuggingFace Jobs GPU flavors")
+    table.add_column("GPU", style="bold", no_wrap=True)
+    table.add_column("Flavors", style="cyan")
+    for label, flavors in gpu_flavors_grouped().items():
+        table.add_row(label, ", ".join(flavors))
+    console.print(table)
+    console.print(
+        "\n[dim]Use with:[/dim] kernels-bench quick ... --remote <flavor>   "
+        "[dim](h200 is the single-GPU Hopper card)[/dim]"
+    )

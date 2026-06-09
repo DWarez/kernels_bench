@@ -3,10 +3,12 @@
 import pytest
 import torch
 
+from kernels_bench import bench as bench_mod
 from kernels_bench.bench import (
     Bench,
     _resolve_workload,
     auto_bytes,
+    load_kernel,
     param_combinations,
     split_kernel_ref,
 )
@@ -146,6 +148,29 @@ def test_split_kernel_ref_with_revision():
     assert split_kernel_ref("org/repo@dev") == ("org/repo", "dev")
     assert split_kernel_ref("org/repo@v1.2.0") == ("org/repo", "v1.2.0")
     assert split_kernel_ref("org/repo@a1b2c3d") == ("org/repo", "a1b2c3d")
+
+
+def test_load_kernel_defaults_revision_to_main(monkeypatch):
+    # Newer `kernels` rejects a bare get_kernel(repo_id); we must pass "main".
+    seen = {}
+    monkeypatch.setattr(
+        bench_mod,
+        "get_kernel",
+        lambda repo_id, revision: seen.update(repo_id=repo_id, revision=revision) or "K",
+    )
+    assert load_kernel("org/repo") == "K"
+    assert seen == {"repo_id": "org/repo", "revision": "main"}
+
+
+def test_load_kernel_honors_explicit_revision(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(
+        bench_mod,
+        "get_kernel",
+        lambda repo_id, revision: seen.update(repo_id=repo_id, revision=revision),
+    )
+    load_kernel("org/repo@dev")
+    assert seen == {"repo_id": "org/repo", "revision": "dev"}
 
 
 def test_split_kernel_ref_empty_revision():

@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import itertools
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from kernels import get_kernel
+
+if TYPE_CHECKING:
+    from rich.console import Console
 
 from kernels_bench.progress import benchmark_progress, make_on_step
 from kernels_bench.runner import BenchResult, KernelResult, _resolve_specs, run_benchmark
@@ -54,6 +57,23 @@ def split_kernel_ref(spec: str) -> tuple[str, str | None]:
     """
     repo_id, _, revision = spec.partition("@")
     return repo_id, (revision or None)
+
+
+# Revision used when a kernel spec carries no ``@revision``. Recent ``kernels``
+# releases require an explicit ``version`` or ``revision`` and reject a bare
+# ``get_kernel(repo_id)``; ``"main"`` restores the prior default-branch behavior.
+DEFAULT_REVISION = "main"
+
+
+def load_kernel(spec: str) -> Any:
+    """Load a kernel from a ``repo_id[@revision]`` spec, defaulting the revision.
+
+    When the spec has no ``@revision`` we fall back to ``DEFAULT_REVISION``
+    rather than passing ``None`` — newer ``kernels`` raises on an unspecified
+    revision. An explicit ``@revision`` is honored unchanged.
+    """
+    repo_id, revision = split_kernel_ref(spec)
+    return get_kernel(repo_id, revision=revision or DEFAULT_REVISION)
 
 
 class Bench:
@@ -139,6 +159,7 @@ class Bench:
         runtime: Runtime | None = None,
         collect_metrics: bool = True,
         profile: bool = False,
+        console: Console | None = None,
     ) -> BenchResult:
         """Run the benchmark for all kernels and param combinations.
 
@@ -152,6 +173,9 @@ class Bench:
             runtime: GPU runtime to use (auto-detected if not provided)
             collect_metrics: if True (default), collect peak memory and GPU utilization
                 during each timed window. Set False to skip the background sampler.
+            console: Rich console for the progress display. Defaults to stdout; the
+                remote worker passes a stderr console so progress never collides with
+                the result it writes to stdout.
         """
         if self._fn is None:
             raise RuntimeError("no benchmark function registered — use @bench.fn")
@@ -164,9 +188,8 @@ class Bench:
         # revisions of one repo show up separately.
         loaded_kernels: dict[str, Any] = {}
         for kernel_id in kernels:
-            repo_id, revision = split_kernel_ref(kernel_id)
             try:
-                loaded_kernels[kernel_id] = get_kernel(repo_id, revision=revision)
+                loaded_kernels[kernel_id] = load_kernel(kernel_id)
             except Exception as e:
                 raise RuntimeError(f"failed to load kernel {kernel_id!r}: {e}") from e
 
@@ -190,7 +213,7 @@ class Bench:
         param_combos = self._param_combinations()
         all_results: list[KernelResult] = []
 
-        with benchmark_progress() as progress:
+        with benchmark_progress(console=console) as progress:
             for kernel_id, kernel in loaded_kernels.items():
                 for param_set in param_combos:
                     params_str = ", ".join(f"{k}={v}" for k, v in sorted(param_set.items()))

@@ -98,6 +98,24 @@ class KernelResult:
             return False
         return (self.iqr_ms / med) > 0.10
 
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> KernelResult:
+        """Rebuild from a per-result entry of ``BenchResult.to_dict``.
+
+        Only the raw stored fields are read back; the timing stats
+        (``median_ms`` and friends) are derived properties that recompute
+        themselves from ``times_ms``.
+        """
+        return cls(
+            kernel_id=d["kernel_id"],
+            params=d.get("params", {}),
+            times_ms=d.get("times_ms", []),
+            metrics=RunMetrics.from_dict(d.get("metrics", {})),
+            compile_ms=d.get("compile_ms"),
+            flops=d.get("flops"),
+            bytes_per_iter=d.get("bytes_per_iter"),
+        )
+
 
 @dataclasses.dataclass(frozen=True)
 class BenchResult:
@@ -186,6 +204,23 @@ class BenchResult:
                 for kr in self.kernel_results
             ],
         }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> BenchResult:
+        """Rebuild a ``BenchResult`` from a ``to_dict`` payload.
+
+        This is the local side of the remote round-trip: a job emits
+        ``to_dict`` JSON, and the launcher reconstructs the result here so the
+        normal ``print_results`` / export path works unchanged.
+        """
+        device = d.get("device")
+        validation = d.get("validation")
+        return cls(
+            bench_name=d["bench_name"],
+            kernel_results=[KernelResult.from_dict(r) for r in d.get("results", [])],
+            device=DeviceInfo.from_dict(device) if device is not None else None,
+            validation=(ValidationReport.from_dict(validation) if validation is not None else None),
+        )
 
 
 def _resolve_specs(specs: list[TensorSpec], params: dict[str, int]) -> list[TensorSpec]:

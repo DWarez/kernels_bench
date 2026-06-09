@@ -12,6 +12,7 @@ dependencies = [
     "pydantic>=2.0",
     "numpy",
     "nvidia-ml-py",
+    "huggingface_hub>=1.0",
 ]
 
 [project.scripts]

@@ -60,6 +60,19 @@ class ValidationResult:
     def to_dict(self) -> dict[str, Any]:
         return dataclasses.asdict(self)
 
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> ValidationResult:
+        """Rebuild from a ``to_dict`` payload (used for remote-result transport)."""
+        return cls(
+            kernel_a=str(d["kernel_a"]),
+            kernel_b=str(d["kernel_b"]),
+            passed=bool(d["passed"]),
+            max_abs_diff=float(d["max_abs_diff"]),
+            max_rel_diff=float(d["max_rel_diff"]),
+            mismatched_elements=int(d["mismatched_elements"]),
+            total_elements=int(d["total_elements"]),
+        )
+
 
 @dataclasses.dataclass(frozen=True)
 class ValidationReport:
@@ -76,6 +89,14 @@ class ValidationReport:
             "all_passed": self.all_passed,
             "comparisons": [c.to_dict() for c in self.comparisons],
         }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> ValidationReport:
+        """Rebuild from a ``to_dict`` payload (used for remote-result transport).
+
+        ``all_passed`` is a derived property, so it is ignored on the way back in.
+        """
+        return cls(comparisons=[ValidationResult.from_dict(c) for c in d.get("comparisons", [])])
 
 
 def _collect_outputs_quick(

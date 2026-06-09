@@ -24,6 +24,7 @@ from huggingface_hub import (
 )
 from rich.console import Console
 
+from kernels_bench.remote import torch_select
 from kernels_bench.remote.request import RESULT_BEGIN, RESULT_END, RemoteRequest
 from kernels_bench.runner import BenchResult
 
@@ -34,10 +35,10 @@ _GIT_URL = "https://github.com/dwarez/kernels_bench.git"
 _WORKER = Path(__file__).parent / "_worker.py"
 
 
-# PyTorch CUDA-12.6 wheel index. cu126 runs on every HF Jobs driver (the common
-# CUDA-12.9 ones and newer 13.x via backward compat); the default PyPI torch is a
-# cu130 build that fails on a 12.9 driver ("driver too old").
-_TORCH_INDEX = "https://download.pytorch.org/whl/cu126"
+# Fallback torch CUDA build, used only when no kernel in the run publishes CUDA
+# builds for the resolver to key off (see torch_select). cu128 runs on every
+# current HF Jobs GPU driver.
+_FALLBACK_TORCH_CUDA = "cu128"
 
 
 def _dependency_spec() -> str:
@@ -46,25 +47,55 @@ def _dependency_spec() -> str:
     return f"{base}@{ref}" if ref else base
 
 
-def _build_worker_script() -> tuple[str, str]:
+def _resolve_torch(kernels: list[str], console: Console) -> tuple[str, str]:
+    """Decide ``(torch_spec, cuda_tag)`` for the worker.
+
+    The build is *derived* from the kernels' published variants
+    (:func:`torch_select.resolve`). ``KB_REMOTE_TORCH`` / ``KB_REMOTE_TORCH_CUDA``
+    are overrides only: each, when set, wins over the resolved value (and a forced
+    CUDA constrains the resolution). If no kernel publishes CUDA builds, fall back
+    to the latest torch at cu128.
+    """
+    env_torch = os.environ.get("KB_REMOTE_TORCH")
+    env_cuda = os.environ.get("KB_REMOTE_TORCH_CUDA")
+
+    if env_torch and env_cuda:
+        torch_spec, cuda = env_torch, env_cuda  # fully manual — no Hub lookup
+    else:
+        forced = torch_select.cuda_from_tag(env_cuda) if env_cuda else None
+        try:
+            resolved = torch_select.resolve(kernels, forced_cuda=forced)
+        except torch_select.NoCompatibleTorch as e:
+            raise click.ClickException(str(e)) from e
+        base_torch, base_cuda = resolved or ("torch", _FALLBACK_TORCH_CUDA)
+        torch_spec = env_torch or base_torch
+        cuda = env_cuda or base_cuda
+
+    console.print(f"[dim]torch build: {torch_spec} ({cuda})[/dim]")
+    return torch_spec, cuda
+
+
+def _build_worker_script(torch_spec: str, cuda: str) -> tuple[str, str]:
     """Write the worker with a PEP-723 header pinning all deps; return (path, tmpdir).
 
     torch and kernels-bench must resolve in one uv pass. Passing kernels-bench via
     ``uv run --with`` triggers a second resolution that ignores ``[tool.uv.sources]``
-    and re-pulls a cu130 torch; inlining both (no ``--with``) keeps torch on cu126.
+    and re-pulls the default-index torch; inlining both (no ``--with``) keeps torch
+    on the chosen CUDA index.
     """
+    index = f"pytorch-{cuda}"
     header = f'''\
 # /// script
 # requires-python = ">=3.12"
-# dependencies = ["torch", "{_dependency_spec()}"]
+# dependencies = ["{torch_spec}", "{_dependency_spec()}"]
 #
 # [[tool.uv.index]]
-# name = "pytorch-cu126"
-# url = "{_TORCH_INDEX}"
+# name = "{index}"
+# url = "https://download.pytorch.org/whl/{cuda}"
 # explicit = true
 #
 # [tool.uv.sources]
-# torch = {{ index = "pytorch-cu126" }}
+# torch = {{ index = "{index}" }}
 # ///
 '''
     tmpdir = tempfile.mkdtemp(prefix="kb_remote_")
@@ -128,7 +159,9 @@ def run_remote(
     job_env = {"KB_REQUEST": request.to_json()}
 
     # Deps live in the worker's PEP-723 header (single resolution); no --with.
-    worker_path, worker_tmpdir = _build_worker_script()
+    # torch is derived from the kernels' published build matrix (see _resolve_torch).
+    torch_spec, cuda = _resolve_torch(request.kernels, console)
+    worker_path, worker_tmpdir = _build_worker_script(torch_spec, cuda)
 
     run_kwargs = dict(
         script=worker_path,

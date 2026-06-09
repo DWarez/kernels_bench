@@ -31,6 +31,12 @@ def _quick_request() -> RemoteRequest:
     )
 
 
+@pytest.fixture(autouse=True)
+def _stub_torch_resolve(monkeypatch):
+    """Keep launch tests offline — torch resolution hits the Hub otherwise."""
+    monkeypatch.setattr(launch, "_resolve_torch", lambda kernels, console: ("torch", "cu128"))
+
+
 def test_run_remote_parses_sentinel_result(monkeypatch):
     monkeypatch.delenv("KB_REMOTE_REF", raising=False)
     expected = _expected_result()
@@ -58,7 +64,7 @@ def test_run_remote_parses_sentinel_result(monkeypatch):
     # All deps live in the generated worker's PEP-723 header (no --with).
     assert "dependencies" not in captured
     assert "kernels-bench @ git+" in captured["script_text"]
-    assert "pytorch-cu126" in captured["script_text"]
+    assert "pytorch-cu128" in captured["script_text"]
 
 
 def test_run_remote_respects_remote_ref_env(monkeypatch):

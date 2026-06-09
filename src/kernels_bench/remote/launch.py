@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import tempfile
 from pathlib import Path
 
 import click
@@ -32,10 +34,46 @@ _GIT_URL = "https://github.com/dwarez/kernels_bench.git"
 _WORKER = Path(__file__).parent / "_worker.py"
 
 
+# PyTorch CUDA-12.6 wheel index. cu126 runs on every HF Jobs driver (the common
+# CUDA-12.9 ones and newer 13.x via backward compat); the default PyPI torch is a
+# cu130 build that fails on a 12.9 driver ("driver too old").
+_TORCH_INDEX = "https://download.pytorch.org/whl/cu126"
+
+
 def _dependency_spec() -> str:
     ref = os.environ.get("KB_REMOTE_REF")
     base = f"kernels-bench @ git+{_GIT_URL}"
     return f"{base}@{ref}" if ref else base
+
+
+def _build_worker_script() -> tuple[str, str]:
+    """Materialize the worker with a PEP-723 header pinning all deps; return (path, tmpdir).
+
+    torch and kernels-bench (from git) MUST resolve in a single uv pass: with
+    ``uv run --with <kernels-bench>``, the ``--with`` dependency gets its own
+    resolution that ignores the script's ``[tool.uv.sources]`` and re-pulls a
+    cu130 torch. So we inline both into the script header and pass no ``--with``
+    deps — that way the cu126 source applies to torch even though kernels-bench
+    pulls it transitively.
+    """
+    header = f'''\
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["torch", "{_dependency_spec()}"]
+#
+# [[tool.uv.index]]
+# name = "pytorch-cu126"
+# url = "{_TORCH_INDEX}"
+# explicit = true
+#
+# [tool.uv.sources]
+# torch = {{ index = "pytorch-cu126" }}
+# ///
+'''
+    tmpdir = tempfile.mkdtemp(prefix="kb_remote_")
+    path = Path(tmpdir) / "_worker.py"
+    path.write_text(header + _WORKER.read_text())
+    return str(path), tmpdir
 
 
 def _extract_result(logs: str) -> dict | None:
@@ -90,16 +128,16 @@ def run_remote(
         script_args = [bench_file]
 
     secrets = {"HF_TOKEN": token} if token else None
-
-    # The torch CUDA build is pinned to cu126 in _worker.py's PEP-723 metadata so
-    # it runs on HF Jobs' (heterogeneous, often CUDA-12.9) drivers — see the note
-    # there. Nothing torch-related needs to go in the job env.
     job_env = {"KB_REQUEST": request.to_json()}
 
+    # All deps (incl. torch, pinned to cu126) live in the generated worker's
+    # PEP-723 header so they resolve in one pass — see _build_worker_script. We
+    # pass NO ``dependencies`` (--with) here, which would re-resolve torch as cu130.
+    worker_path, worker_tmpdir = _build_worker_script()
+
     run_kwargs = dict(
-        script=str(_WORKER),
+        script=worker_path,
         script_args=script_args,
-        dependencies=[_dependency_spec()],
         env=job_env,
         secrets=secrets,
         flavor=flavor,
@@ -116,6 +154,9 @@ def run_remote(
         job = run_uv_job(**run_kwargs)
     except Exception as e:
         raise click.ClickException(f"failed to launch HF job: {e}") from e
+    finally:
+        # run_uv_job has already read+uploaded the file content by now.
+        shutil.rmtree(worker_tmpdir, ignore_errors=True)
 
     if getattr(job, "url", None):
         console.print(f"[dim]Job {job.id} — {job.url}[/dim]")

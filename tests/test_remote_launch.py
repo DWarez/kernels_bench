@@ -2,6 +2,7 @@
 
 import io
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import click
@@ -39,6 +40,8 @@ def test_run_remote_parses_sentinel_result(monkeypatch):
 
     def fake_run_uv_job(**kwargs):
         captured.update(kwargs)
+        # The generated worker exists only during the call; read it now.
+        captured["script_text"] = Path(kwargs["script"]).read_text()
         return SimpleNamespace(id="job-123", url="https://hf.co/jobs/job-123")
 
     monkeypatch.setattr(launch, "run_uv_job", fake_run_uv_job)
@@ -52,7 +55,10 @@ def test_run_remote_parses_sentinel_result(monkeypatch):
     assert captured["flavor"] == "h200"
     assert "KB_REQUEST" in captured["env"]
     assert captured["secrets"]["HF_TOKEN"] == "hf_tok"
-    assert captured["dependencies"][0].startswith("kernels-bench @ git+")
+    # All deps live in the generated worker's PEP-723 header (no --with).
+    assert "dependencies" not in captured
+    assert "kernels-bench @ git+" in captured["script_text"]
+    assert "pytorch-cu126" in captured["script_text"]
 
 
 def test_run_remote_respects_remote_ref_env(monkeypatch):
@@ -61,6 +67,7 @@ def test_run_remote_respects_remote_ref_env(monkeypatch):
 
     def fake_run_uv_job(**kwargs):
         captured.update(kwargs)
+        captured["script_text"] = Path(kwargs["script"]).read_text()
         return SimpleNamespace(id="j", url=None)
 
     expected = _expected_result()
@@ -73,7 +80,7 @@ def test_run_remote_respects_remote_ref_env(monkeypatch):
     monkeypatch.setattr(launch, "get_token", lambda: None)
 
     launch.run_remote(_quick_request(), flavor="t4-small", console=_silent_console())
-    assert captured["dependencies"][0].endswith("@feat/remote-hf-jobs")
+    assert "@feat/remote-hf-jobs" in captured["script_text"]
     # No token -> no secrets injected.
     assert captured["secrets"] is None
 

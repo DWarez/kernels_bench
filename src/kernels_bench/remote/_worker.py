@@ -1,20 +1,7 @@
-# /// script
-# requires-python = ">=3.12"
-# dependencies = ["torch"]
-#
-# # Pin torch to a CUDA-12.6 wheel. HF Jobs instances have heterogeneous NVIDIA
-# # drivers; the default PyPI torch is now a cu130 build that fails on the common
-# # CUDA-12.9 driver ("driver too old"). cu126 runs on every HF driver (12.6+ and
-# # 13.x via backward compat). `uv run` ignores --torch-backend, so we pin the
-# # index here instead — uv reads this script metadata even with --with deps.
-# [[tool.uv.index]]
-# name = "pytorch-cu126"
-# url = "https://download.pytorch.org/whl/cu126"
-# explicit = true
-#
-# [tool.uv.sources]
-# torch = { index = "pytorch-cu126" }
-# ///
+# NOTE: this script's PEP-723 dependency header (torch pinned to a cu126 wheel
+# *and* kernels-bench from git, resolved in one pass) is generated and prepended
+# by launch.run_remote at upload time — see launch._build_worker_script for why
+# both must share a single resolution.
 """Remote worker — runs inside an HF Job on the target GPU.
 
 This script is uploaded and executed by ``launch.run_remote`` via ``uv run``,

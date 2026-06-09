@@ -2,6 +2,22 @@
 
 A benchmarking tool for [HuggingFace Kernels](https://huggingface.co/docs/kernels/index). Compare CUDA kernel performance on your hardware — from the CLI or as a Python library.
 
+## Example
+
+FlashAttention-2 vs FlashAttention-3 on an A100, from a single command — the right torch build is auto-resolved from each kernel's published variants, run remotely on HF Jobs, results streamed back and rendered locally (fastest in green):
+
+![kernels-bench comparing flash-attn2 and flash-attn3 on an A100](docs/fa2-vs-fa3.png)
+
+```bash
+kernels-bench quick \
+  -k kernels-community/flash-attn2,kernels-community/flash-attn3 \
+  --fn flash_attn_func \
+  --arg q:4,8192,32,128:float16 \
+  --arg k:4,8192,32,128:float16 \
+  --arg v:4,8192,32,128:float16 \
+  --remote a100-large
+```
+
 ## Install
 
 Requires Python 3.12+ and a CUDA GPU.
@@ -182,29 +198,7 @@ Multi-GPU and larger variants (`a100x8`, `h200x4`, …) are listed too.
 
 ## Output
 
-Results are displayed in a box-drawing table showing timing, comparison bars, and GPU info:
-
-```
-┌┬┬┬┬┬┬┬┬┬┬┬┬┬┬┬┬┬┬┬┬┬┬┬┬┬┬┬┬┬┬┬┬┬┬┬┬┬┬┬┬┬┬┬┬┬┬┬┬┬┬┬┬┬┬┬ kernels-bench v0.1.0 ┐
-│                   KERNEL BENCHMARK RESULTS                                  │
-│                      "gelu_activation"                                      │
-│          NVIDIA GeForce RTX 4090 | CUDA 12.8 | 24.0 GB                      │
-│                torch 2.11.0 | python 3.12.13                                │
-│               2 KERNELS x 3 PARAM SETS                                      │
-├┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┴┤
-│                      PARAMS: M=1024, N=1024                                 │
-├────────────────────────────┬────────────────────────────────────────────────┤
-│ kernel-a                   │ 0.100 ms  ████████████████████████░░░░░░░░░░░░ │
-│                            │ mean=0.100  std=0.002  min=0.097  max=0.102    │
-│                            │ peak_mem=64.0 MB  util=87% (peak 99%)          │
-│                            │ FASTEST                                        │
-├────────────────────────────┼────────────────────────────────────────────────┤
-│ kernel-b                   │ 0.128 ms  ██████████████████████████████████   │
-│                            │ mean=0.128  std=0.002  min=0.124  max=0.131    │
-│                            │ peak_mem=64.0 MB  util=72% (peak 94%)          │
-│                            │ 1.28x slower  ·  util 72% (fastest: 87%)       │
-└────────────────────────────┴────────────────────────────────────────────────┘
-```
+Results are shown in a colorized box-drawing table (see the [example](#example) above) — timing with comparison bars, throughput, peak memory, and GPU utilization. The fastest kernel is highlighted green, regressions and noisy measurements red; each kernel is labeled by its full repo id (and `@revision` when comparing revisions).
 
 When `--validate` is used, a validation section appears before the timing results showing PASS/FAIL for each kernel pair with max absolute/relative differences.
 

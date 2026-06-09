@@ -1,13 +1,8 @@
 """Serializable description of a remote benchmark request.
 
-A ``RemoteRequest`` is the data that travels from the local CLI to the HF Jobs
-worker (as a JSON env var). It captures everything needed to rebuild and run
-the benchmark remotely. ``build_bench`` reconstructs a :class:`Bench` for both
-``quick`` and ``run`` modes so the worker has a single execution path.
-
-Imports of the heavier machinery (CLI parsers, kernel loading) are deferred
-into ``build_bench``: that code only runs *remotely*, inside the worker, while
-the local CLI just constructs and serializes this object.
+A ``RemoteRequest`` travels from the local CLI to the HF Jobs worker as a JSON
+env var. ``build_bench`` reconstructs a :class:`Bench` for both ``quick`` and
+``run`` modes so the worker has one execution path.
 """
 
 from __future__ import annotations

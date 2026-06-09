@@ -61,7 +61,7 @@ Any kernel on the Hub works — here's Flash Attention 2 with sequence length 8k
 
 ```bash
 kernels-bench quick \
-  -k kernels-community/flash-attn \
+  -k kernels-community/flash-attn2 \
   --fn flash_attn_func \
   --arg q:4,8192,32,128:float16 \
   --arg k:4,8192,32,128:float16 \
@@ -280,6 +280,7 @@ kernels-bench run <bench-file> [options]    # benchmark with a bench file
 | `--no-metrics` | Skip collecting peak memory and GPU utilization |
 | `--remote` | Run on a HuggingFace Jobs GPU of this flavor (e.g. `h200`) |
 | `--remote-timeout` | Max remote job duration (default: 30m) |
+| `--remote-namespace` | Org/account the HF Job runs under (or `KB_JOB_NAMESPACE`) |
 
 ### `quick` specific options
 

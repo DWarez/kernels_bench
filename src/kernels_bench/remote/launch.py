@@ -47,14 +47,11 @@ def _dependency_spec() -> str:
 
 
 def _build_worker_script() -> tuple[str, str]:
-    """Materialize the worker with a PEP-723 header pinning all deps; return (path, tmpdir).
+    """Write the worker with a PEP-723 header pinning all deps; return (path, tmpdir).
 
-    torch and kernels-bench (from git) MUST resolve in a single uv pass: with
-    ``uv run --with <kernels-bench>``, the ``--with`` dependency gets its own
-    resolution that ignores the script's ``[tool.uv.sources]`` and re-pulls a
-    cu130 torch. So we inline both into the script header and pass no ``--with``
-    deps — that way the cu126 source applies to torch even though kernels-bench
-    pulls it transitively.
+    torch and kernels-bench must resolve in one uv pass. Passing kernels-bench via
+    ``uv run --with`` triggers a second resolution that ignores ``[tool.uv.sources]``
+    and re-pulls a cu130 torch; inlining both (no ``--with``) keeps torch on cu126.
     """
     header = f'''\
 # /// script
@@ -130,9 +127,7 @@ def run_remote(
     secrets = {"HF_TOKEN": token} if token else None
     job_env = {"KB_REQUEST": request.to_json()}
 
-    # All deps (incl. torch, pinned to cu126) live in the generated worker's
-    # PEP-723 header so they resolve in one pass — see _build_worker_script. We
-    # pass NO ``dependencies`` (--with) here, which would re-resolve torch as cu130.
+    # Deps live in the worker's PEP-723 header (single resolution); no --with.
     worker_path, worker_tmpdir = _build_worker_script()
 
     run_kwargs = dict(

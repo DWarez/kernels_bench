@@ -51,8 +51,6 @@ def test_run_remote_parses_sentinel_result(monkeypatch):
     # Job was wired correctly.
     assert captured["flavor"] == "h200"
     assert "KB_REQUEST" in captured["env"]
-    # uv must auto-pick a torch CUDA wheel matching the instance driver.
-    assert captured["env"]["UV_TORCH_BACKEND"] == "auto"
     assert captured["secrets"]["HF_TOKEN"] == "hf_tok"
     assert captured["dependencies"][0].startswith("kernels-bench @ git+")
 
